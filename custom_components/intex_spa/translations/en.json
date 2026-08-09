@@ -37,7 +37,9 @@
       "cannot_connect": "Could not reach the Intex service. Check the internet connection and try again.",
       "invalid_auth": "Wrong email, password or country code.",
       "no_devices": "The account has no devices on it.",
-      "unknown": "Unexpected error. See the log for details."
+      "unknown": "Unexpected error. See the log for details.",
+      "wrong_account": "Those credentials work, but that account does not own this spa.",
+      "invalid_host": "That is not a valid IP address."
     },
     "abort": {
       "already_configured": "This spa has already been added.",
@@ -82,6 +84,11 @@
       "heating": {
         "name": "Heating"
       }
+    }
+  },
+  "exceptions": {
+    "temperature_out_of_range": {
+      "message": "The spa only accepts a target between {min} and {max} degrees Fahrenheit."
     }
   }
 }

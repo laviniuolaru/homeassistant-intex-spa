@@ -42,9 +42,11 @@ from .link import SpaLink
 
 _LOGGER = logging.getLogger(__name__)
 
-# tinytuya reports a decrypt/version mismatch as 914 and a bad payload as 904. Either can
-# mean the key was rotated, so both are worth one cloud lookup.
-KEY_ERRORS = frozenset({"914", "904"})
+# 914 is what tinytuya returns when the session-key negotiation fails, which is the
+# signature of a rotated key. 904 is deliberately not here: it also means "the peer
+# closed the socket", which another Tuya client stealing the connection produces, and
+# answering that with a cloud sign-in is the wrong diagnosis.
+KEY_ERRORS = frozenset({"914"})
 
 # Never ask the cloud more than this often, however badly the LAN side is failing.
 KEY_REFRESH_COOLDOWN = 600.0
@@ -84,7 +86,9 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # changed, so replacing this wholesale would make every absent point read as
         # unknown and entities would flicker between their real value and blank.
         self._dps: dict[str, Any] = {}
-        self._last_seen = 0.0
+        # Seeded to now: monotonic() is uptime, so a zero would make the very first poll
+        # report "nothing heard for two minutes" about a spa reachable for two seconds.
+        self._last_seen = time.monotonic()
         self._link = SpaLink(self._build_device, self._push_from_thread, self._state_from_thread)
 
     @property
@@ -94,7 +98,7 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # --- connection ----------------------------------------------------------------
 
     def _build_device(self) -> tinytuya.Device:
-        """Construct the tinytuya client. Runs on the link thread: it opens a socket."""
+        """Construct the tinytuya client. Runs on the link thread, which owns the socket."""
         data = self.entry.data
         device = tinytuya.Device(
             dev_id=data[CONF_DEVICE_ID],
@@ -112,13 +116,18 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._confirm_cancel is not None:
             self._confirm_cancel()
             self._confirm_cancel = None
-        await super().async_shutdown()
+        # Stop the link first: otherwise its thread can push into a coordinator that
+        # has already been torn down.
         await self.hass.async_add_executor_job(self._link.stop)
+        await super().async_shutdown()
 
     # --- callbacks from the link thread ---------------------------------------------
 
     def _push_from_thread(self, dps: dict[str, Any]) -> None:
-        self.hass.loop.call_soon_threadsafe(self._apply_push, dps)
+        try:
+            self.hass.loop.call_soon_threadsafe(self._apply_push, dps)
+        except RuntimeError:
+            pass        # the loop is already closed; Home Assistant is shutting down
 
     @callback
     def _apply_push(self, dps: dict[str, Any]) -> None:
@@ -131,13 +140,17 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.info("Reconnected to the spa")
             return
         _LOGGER.info("Lost the connection to the spa: %s", detail)
-        # Do not wait for the next scheduled poll to notice; a lost connection should
-        # show up as unavailable entities promptly.
-        self.hass.loop.call_soon_threadsafe(self._note_disconnect)
+        # Mark the entities unavailable directly. Asking for a refresh would run the
+        # whole update path - a blocking read on a dead socket, then rediscovery, then
+        # possibly a cloud sign-in - every time the link drops.
+        try:
+            self.hass.loop.call_soon_threadsafe(self._note_disconnect, detail)
+        except RuntimeError:
+            pass        # the loop is already closed; Home Assistant is shutting down
 
     @callback
-    def _note_disconnect(self) -> None:
-        self.hass.async_create_task(self.async_request_refresh())
+    def _note_disconnect(self, detail: str) -> None:
+        self.async_set_update_error(UpdateFailed(detail or "the spa is not reachable"))
 
     async def _async_run(self, func) -> Any:
         """Run something on the socket thread and wait for it."""
@@ -259,32 +272,36 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Set one data point and show it at once, rather than waiting to be told."""
         last: str = "no response"
 
-        for attempt in (1, 2):
-            result: dict[str, Any] = {}
-            try:
-                result = await self._async_run(
-                    lambda device: device.set_value(dp, value, nowait=False) or {}
-                )
-            except ConfigEntryAuthFailed as err:
-                # Raised from a service call this would only be an error toast: only the
-                # coordinator's own refresh path turns it into a reauth prompt.
-                self.entry.async_start_reauth(self.hass)
-                raise HomeAssistantError(str(err)) from err
-            except Exception as err:  # noqa: BLE001
-                last = str(err)
-            else:
-                if not result.get("Err"):
-                    # Order matters: the spa often echoes its previous state in the
-                    # reply, so what was asked for is applied last and wins.
-                    if isinstance(result.get("dps"), dict):
-                        self._dps.update(result["dps"])
-                    self._dps[dp] = value
-                    self.async_set_updated_data(dict(self._dps))
-                    self._schedule_confirmation()
-                    return
-                last = str(result.get("Error") or result.get("Err"))
+        try:
+            for attempt in (1, 2):
+                result: dict[str, Any] = {}
+                try:
+                    result = await self._async_run(
+                        lambda device: device.set_value(dp, value, nowait=False) or {}
+                    )
+                except Exception as err:  # noqa: BLE001 - tinytuya raises bare exceptions
+                    last = str(err)
+                else:
+                    if not result.get("Err"):
+                        # Order matters: the spa often echoes its previous state in the
+                        # reply, so what was asked for is applied last and wins.
+                        if isinstance(result.get("dps"), dict):
+                            self._dps.update(result["dps"])
+                        self._dps[dp] = value
+                        self.async_set_updated_data(dict(self._dps))
+                        self._schedule_confirmation()
+                        return
+                    last = str(result.get("Error") or result.get("Err"))
 
-            if attempt == 2 or not await self._async_repair(str(result.get("Err", ""))):
-                break
+                # Inside the try on purpose: repair is where a credential failure comes
+                # from, and it has to be caught below rather than escape a service call.
+                if attempt == 2 or not await self._async_repair(str(result.get("Err", ""))):
+                    break
+        except ConfigEntryAuthFailed as err:
+            # Home Assistant only turns this into a re-authentication prompt when it
+            # comes out of the coordinator's own refresh. Raised from a service call it
+            # would be an error toast and nothing else, so ask for the prompt directly.
+            self.entry.async_start_reauth(self.hass)
+            raise HomeAssistantError(str(err)) from err
 
         raise HomeAssistantError(f"the spa did not accept the command: {last}")

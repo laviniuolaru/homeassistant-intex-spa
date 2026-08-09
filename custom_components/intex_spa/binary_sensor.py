@@ -14,7 +14,7 @@ from . import IntexSpaConfigEntry
 from .const import DP_HEAT_STATE, HEAT_STATE_ACTIVE
 from .entity import IntexSpaEntity
 
-# The socket thread already serialises the wire; this bounds how much can pile up.
+# Read-only: zero means Home Assistant applies no limit, which is right here.
 PARALLEL_UPDATES = 0
 
 

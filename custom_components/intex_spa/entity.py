@@ -24,8 +24,8 @@ class IntexSpaEntity(CoordinatorEntity[IntexSpaCoordinator]):
             identifiers={(DOMAIN, device_id)},
             name=coordinator.entry.title,
             manufacturer="Intex",
-            model=coordinator.entry.data.get("product_id") or "PureSpa",
-            configuration_url=f"http://{coordinator.entry.data['host']}",
+            model="PureSpa",
+            model_id=coordinator.entry.data.get("product_id") or None,
         )
 
     def dp(self, dp_id: str) -> Any:

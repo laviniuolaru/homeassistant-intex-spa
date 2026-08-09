@@ -37,7 +37,9 @@
       "cannot_connect": "Serviciul Intex nu poate fi contactat. Verifică internetul și încearcă din nou.",
       "invalid_auth": "Email, parolă sau prefix de țară greșit.",
       "no_devices": "Contul nu are niciun dispozitiv.",
-      "unknown": "Eroare neașteptată. Vezi logul pentru detalii."
+      "unknown": "Eroare neașteptată. Vezi logul pentru detalii.",
+      "wrong_account": "Datele sunt corecte, dar contul acela nu deține acest spa.",
+      "invalid_host": "Nu este o adresă IP validă."
     },
     "abort": {
       "already_configured": "Spa-ul este deja adăugat.",
@@ -82,6 +84,11 @@
       "heating": {
         "name": "Încălzire"
       }
+    }
+  },
+  "exceptions": {
+    "temperature_out_of_range": {
+      "message": "Spa-ul acceptă o țintă doar între {min} și {max} grade Fahrenheit."
     }
   }
 }

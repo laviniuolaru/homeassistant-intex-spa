@@ -72,7 +72,9 @@ for name, packet in (("6666 plaintext", build_6666()),
     print(f"  {name:16s} {'OK' if good else 'FAIL'}  -> {parsed}")
 
 print(f"  {'garbage':16s} {'OK' if discovery._strip_frame(b'nu e un cadru') is None else 'FAIL'}")
-print(f"  {'too short':16s} {'OK' if discovery._strip_frame(b'\\x00\\x00U\\xaa') is None else 'FAIL'}")
+_short = discovery._strip_frame(struct.pack('>I', 0x000055AA)) is None
+ok &= _short
+print(f"  {'too short':16s} {'OK' if _short else 'FAIL'}")
 
 # --- a beacon is unauthenticated, so none of its fields may be trusted ---
 print("\nhostile beacons:")
@@ -85,7 +87,6 @@ def feed(payload, sender="192.168.1.50", wanted=None):
     return found
 
 
-ok = True
 cases = [
     ("the claimed ip is ignored in favour of the sender",
      feed({"gwId": "dev1", "ip": "10.9.9.9"}) == {"dev1": "192.168.1.50"}),

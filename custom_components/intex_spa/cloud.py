@@ -28,12 +28,9 @@ from .const import APP_KEY, APP_VERSION, BASE_URL, CH_KEY, SECRET, TTID
 _LOGGER = logging.getLogger(__name__)
 
 # Only these keys take part in the signature, and only when non-empty.
-# Error codes that mean "come back later". Anything else is treated as transient too,
-# except the explicit credential codes below: only those are worth interrupting the user.
-TRANSIENT_CODES = frozenset({
-    "FREQUENT_REQUEST", "FREQUENCY_LIMIT", "EXCEED_LIMIT", "SYSTEM_ERROR",
-    "SERVER_BUSY", "TIMEOUT", "NETWORK_ERROR",
-})
+# Only these mean the credentials are actually wrong. Everything else - named or not -
+# is treated as worth retrying, because interrupting the user with a password prompt
+# over a server hiccup is worse than waiting.
 AUTH_CODES = frozenset({
     "USER_PASSWD_WRONG", "PASSWD_INVALID", "USER_NOT_EXISTS", "USER_PASSWORD_ERROR",
     "ACCOUNT_NOT_EXIST", "LOGIN_FAILED", "PERMISSION_DENIED", "TOKEN_INVALID",

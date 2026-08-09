@@ -1,8 +1,11 @@
 """Find a Tuya device's LAN address by listening to the beacons it already broadcasts.
 
-Tuya devices announce themselves every few seconds on UDP. The cloud hands us the
-device id but not its address, so this is what saves the user from having to find and
-type an IP. Three dialects exist in the wild and all three are handled:
+The cloud hands us the device id but not its address, so this is what saves the user
+from having to find and type an IP.
+
+It asks first and listens second. Devices on protocol 3.4 and 3.5 - which is what these
+spas are - stay silent until they receive a discovery request, so listening alone finds
+nothing. Older firmware does announce itself unprompted, in three dialects, all handled:
 
   6666  plaintext JSON
   6667  AES-ECB, fixed key shared by every Tuya device
@@ -206,11 +209,11 @@ def _probe(device_id: str) -> str | None:
     found = tinytuya.find_device(dev_id=device_id)
     if isinstance(found, dict):
         # tinytuya reports a miss as {"ip": None, ...} rather than an empty result.
-        return _as_address(found.get("ip"))
+        return as_address(found.get("ip"))
     return None
 
 
-def _as_address(value: Any) -> str | None:
+def as_address(value: Any) -> str | None:
     """Accept only a literal IP address. A hostname here would be resolved and reached."""
     if not isinstance(value, str) or not value:
         return None

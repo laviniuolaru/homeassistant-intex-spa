@@ -21,13 +21,22 @@ from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
-# This is how long a queued command may wait before the loop comes round to it, so it is
-# also the delay a user feels after pressing a button. Each expiry is one socket syscall
-# that returns empty, so four a second costs nothing measurable.
-SOCKET_TIMEOUT = 0.25
+# tinytuya's socket timeout is not just a read deadline: it is also the TCP connect
+# deadline and, on protocol 3.4/3.5, the deadline for each leg of the session-key
+# handshake. Too tight and a slow WiFi link fails the handshake, which tinytuya reports
+# as error 914 - indistinguishable from a rotated key, so the integration would answer
+# congestion with a cloud sign-in and possibly a password prompt.
+#
+# So it is raised while connecting and while a command is in flight, and only lowered
+# for the idle wait, where it sets how long a queued command sits before the loop comes
+# round to it, and so the delay a button press feels.
+CONNECT_TIMEOUT = 5.0
+IDLE_TIMEOUT = 0.25
+SOCKET_TIMEOUT = IDLE_TIMEOUT        # kept for callers that report the loop cadence
 HEARTBEAT_INTERVAL = 10.0
 RECONNECT_DELAY = 5.0
-# tinytuya connects while the device object is built, using its own timeout.
+# The socket opens lazily inside the first receive(), not when the device is built, so
+# this has to outlast a connect attempt plus the reconnect delay.
 JOIN_TIMEOUT = 15.0
 
 
@@ -52,6 +61,7 @@ class SpaLink:
         self._on_push = on_push
         self._on_state = on_state
         self._queue: queue.Queue[_Job] = queue.Queue()
+        self._lifecycle = threading.Lock()
         self._stop = threading.Event()
         self._rebuild = threading.Event()
         self._thread: threading.Thread | None = None
@@ -60,15 +70,22 @@ class SpaLink:
     # --- lifecycle -----------------------------------------------------------------
 
     def start(self) -> None:
-        if self._thread is not None:
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="intex_spa_link", daemon=True)
-        self._thread.start()
+        with self._lifecycle:
+            # A thread that outlived a timed-out join is still holding the spa's only
+            # connection. Clearing _stop here would un-stop it and leave two running.
+            if self._thread is not None and self._thread.is_alive():
+                _LOGGER.debug("The spa connection thread is already running")
+                return
+            self._stop = threading.Event()
+            self._thread = threading.Thread(
+                target=self._run, args=(self._stop,), name="intex_spa_link", daemon=True
+            )
+            self._thread.start()
 
     def stop(self) -> None:
-        self._stop.set()
-        thread, self._thread = self._thread, None
+        with self._lifecycle:
+            self._stop.set()
+            thread = self._thread
         if thread is not None:
             # Long enough to outlast a connect attempt in progress. Abandoning the thread
             # early would leave it holding the spa's one permitted connection while a
@@ -76,6 +93,10 @@ class SpaLink:
             thread.join(timeout=JOIN_TIMEOUT)
             if thread.is_alive():
                 _LOGGER.warning("The spa connection thread did not stop in time")
+            else:
+                with self._lifecycle:
+                    if self._thread is thread:
+                        self._thread = None
         # Anything still queued will never run; fail it rather than leave awaiters hanging.
         while True:
             try:
@@ -114,7 +135,11 @@ class SpaLink:
             self._on_state(connected, detail)
 
     def _drain(self, device: Any) -> None:
-        """Run everything queued. Raises if the socket died, so the caller reconnects."""
+        """Run everything queued, reporting each failure through its own Future.
+
+        Deliberately does not raise: a command can fail for reasons that say nothing
+        about the transport, and dropping the connection over one would cost seconds.
+        """
         while True:
             try:
                 job = self._queue.get_nowait()
@@ -126,7 +151,8 @@ class SpaLink:
                 continue
             try:
                 job.future.set_result(job.func(device))
-                self._set_connected(True)
+                if not self._connected:
+                    self._set_connected(True)
             except Exception as err:  # noqa: BLE001 - reported through the Future
                 # Report it and carry on. A command can fail for reasons that say
                 # nothing about the transport, and dropping the connection over one
@@ -140,36 +166,58 @@ class SpaLink:
         except Exception:  # noqa: BLE001 - closing a dead socket must never raise
             pass
 
-    def _run(self) -> None:
+    def _run(self, stop: threading.Event) -> None:
         device: Any = None
+        settled = False
         last_beat = 0.0
 
-        while not self._stop.is_set():
+        while not stop.is_set():
+            # Honour a pending rebuild before deciding whether to connect, so a request
+            # that arrives while disconnected does not cause a connect-then-discard.
+            if self._rebuild.is_set():
+                self._rebuild.clear()
+                if device is not None:
+                    self._close(device)
+                    device = None
+
             if device is None:
                 try:
                     device = self._build_device()
                     device.set_socketPersistent(True)
-                    device.set_socketTimeout(SOCKET_TIMEOUT)
+                    # tinytuya otherwise retries five times with an uninterruptible five
+                    # second sleep between each, so a single call could block this thread
+                    # for minutes and starve every queued command. The reconnect loop
+                    # below is the retry policy; one underneath it is not wanted.
+                    device.set_socketRetryLimit(1)
+                    device.set_socketRetryDelay(0)
+                    device.set_socketTimeout(CONNECT_TIMEOUT)
                 except Exception as err:  # noqa: BLE001
                     _LOGGER.debug("Could not open the connection to the spa: %s", err)
                     self._set_connected(False, str(err))
-                    self._stop.wait(RECONNECT_DELAY)
+                    stop.wait(RECONNECT_DELAY)
                     continue
+                settled = False
                 last_beat = 0.0
 
-            if self._rebuild.is_set():
-                self._rebuild.clear()
-                self._close(device)
-                device = None
-                continue
-
             try:
-                self._drain(device)
+                if self._queue.qsize() and settled:
+                    # Give a command the generous deadline too: it may have to reopen a
+                    # socket the spa closed while idle.
+                    device.set_socketTimeout(CONNECT_TIMEOUT)
+                    self._drain(device)
+                    device.set_socketTimeout(IDLE_TIMEOUT)
+                else:
+                    self._drain(device)
 
                 data = device.receive()
                 if isinstance(data, dict):
                     dps = data.get("dps")
                     if isinstance(dps, dict) and dps:
+                        if not settled:
+                            # The handshake is behind us; shorten the wait so queued
+                            # commands are picked up promptly from here on.
+                            device.set_socketTimeout(IDLE_TIMEOUT)
+                            settled = True
                         self._set_connected(True)
                         self._on_push(dps)
                     elif data.get("Err"):
@@ -184,7 +232,8 @@ class SpaLink:
                 self._set_connected(False, str(err))
                 self._close(device)
                 device = None
-                self._stop.wait(RECONNECT_DELAY)
+                settled = False
+                stop.wait(RECONNECT_DELAY)
 
         if device is not None:
             self._close(device)

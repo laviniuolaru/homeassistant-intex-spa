@@ -42,7 +42,7 @@ from .const import (
     DOMAIN,
     KNOWN_PRODUCTS,
 )
-from .discovery import find_host
+from .discovery import as_address, find_host
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -132,11 +132,18 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Only reached when the spa never announced itself on the network."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self._create(self._chosen, user_input[CONF_HOST])
+            # Must be a literal address: a hostname here would defeat the same
+            # protection that stops a forged beacon naming an off-network target.
+            host = as_address(user_input[CONF_HOST])
+            if host:
+                return self._create(self._chosen, host)
+            errors["base"] = "invalid_host"
 
         return self.async_show_form(
             step_id="host",
+            errors=errors,
             data_schema=vol.Schema({vol.Required(CONF_HOST): str}),
             description_placeholders={"name": self._chosen.get("name", "spa")},
         )

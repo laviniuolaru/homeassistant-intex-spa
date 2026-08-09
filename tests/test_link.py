@@ -13,6 +13,8 @@ link_mod = util.module_from_spec(_spec)
 _spec.loader.exec_module(link_mod)
 
 link_mod.RECONNECT_DELAY = 0.05          # keep the tests quick
+link_mod.CONNECT_TIMEOUT = 0.05
+link_mod.IDLE_TIMEOUT = 0.05
 link_mod.HEARTBEAT_INTERVAL = 0.2
 
 results = []
@@ -40,6 +42,12 @@ class FakeDevice:
 
     def set_socketTimeout(self, value):
         self.timeout = value
+
+    def set_socketRetryLimit(self, value):
+        self.retry_limit = value
+
+    def set_socketRetryDelay(self, value):
+        self.retry_delay = value
 
     def receive(self):
         self.receives += 1
@@ -76,7 +84,16 @@ sl = link_mod.SpaLink(lambda: device, pushed.append, lambda c, d: None)
 sl.start()
 check("pushed updates arrive on their own", wait_for(lambda: len(pushed) == 2), str(pushed))
 check("the socket was made persistent", device.persistent is True)
-check("a short socket timeout was set", device.timeout == link_mod.SOCKET_TIMEOUT)
+check("tinytuya's own retry loop was disabled", getattr(device, "retry_limit", None) == 1)
+
+# an error dict is how tinytuya really reports a closed socket or a bad key
+errs = FakeDevice(replies=[{"dps": {"104": True}}, {"Err": "914", "Error": "decrypt failed"}])
+seen = []
+sl2 = link_mod.SpaLink(lambda: errs, lambda d: None, lambda c, d: seen.append((c, d)))
+sl2.start()
+check("an error reply is treated as a lost connection",
+      wait_for(lambda: any(c is False for c, _ in seen)), str(seen))
+sl2.stop()
 
 # 2. submitted work runs on the socket thread, not the caller's
 caller = threading.get_ident()
