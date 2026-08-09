@@ -140,37 +140,42 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # --- polling -------------------------------------------------------------------
 
+    async def _async_repair(self, error: str) -> bool:
+        """Try once to make the connection work again. True when something changed.
+
+        Ordered by likelihood: a decrypt failure means the key almost certainly rotated,
+        anything else is more often the spa having moved to a new address.
+        """
+        if error in KEY_ERRORS:
+            return await self._refresh_local_key() or await self._rediscover_host()
+        return await self._rediscover_host() or await self._refresh_local_key()
+
     def _read_status(self, device: tinytuya.Device) -> dict[str, Any]:
         return device.status() or {}
 
     async def _async_update_data(self) -> dict[str, Any]:
+        last: str = "no response"
+
         for attempt in (1, 2):
             device = await self._async_device()
             try:
                 status = await self.hass.async_add_executor_job(self._read_status, device)
             except Exception as err:  # noqa: BLE001 - tinytuya raises bare exceptions
+                # A raised socket error is as good a repair trigger as a returned one,
+                # so fall through instead of giving up on this cycle.
                 self._drop_device()
-                raise UpdateFailed(f"cannot talk to the spa: {err}") from err
+                status, last = {}, str(err)
+            else:
+                dps = status.get("dps")
+                if isinstance(dps, dict) and dps:
+                    return dps
+                last = str(status.get("Error") or status.get("Err") or "no data points")
 
-            dps = status.get("dps")
-            if isinstance(dps, dict) and dps:
-                return dps
-
-            error = str(status.get("Err", ""))
-            _LOGGER.debug("Spa returned no data points (attempt %d): %s", attempt, status)
-            if attempt == 2:
+            _LOGGER.debug("Spa gave nothing back (attempt %d): %s", attempt, last)
+            if attempt == 2 or not await self._async_repair(str(status.get("Err", ""))):
                 break
 
-            # One repair attempt, cheapest cause first.
-            if error in KEY_ERRORS and await self._refresh_local_key():
-                continue
-            if await self._rediscover_host():
-                continue
-            if await self._refresh_local_key():
-                continue
-            break
-
-        raise UpdateFailed("the spa did not return any data")
+        raise UpdateFailed(f"the spa did not return any data: {last}")
 
     # --- writing -------------------------------------------------------------------
 
@@ -178,18 +183,31 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return device.set_value(dp, value, nowait=False) or {}
 
     async def async_set_dp(self, dp: str, value: Any) -> None:
-        """Set one data point, then refresh so the UI reflects reality rather than hope."""
-        device = await self._async_device()
-        try:
-            result = await self.hass.async_add_executor_job(self._write, device, dp, value)
-        except Exception as err:  # noqa: BLE001
-            self._drop_device()
-            raise HomeAssistantError(f"cannot send the command to the spa: {err}") from err
+        """Set one data point, then refresh so the UI reflects reality rather than hope.
 
-        if result.get("Err"):
-            raise HomeAssistantError(f"the spa rejected the command: {result.get('Error', result)}")
+        Repairs on the same terms as polling. Without this, the first press of a button
+        after the key rotated would fail with an error toast even though the next poll
+        would have fixed things seconds later.
+        """
+        last: str = "no response"
 
-        await self.async_request_refresh()
+        for attempt in (1, 2):
+            device = await self._async_device()
+            try:
+                result = await self.hass.async_add_executor_job(self._write, device, dp, value)
+            except Exception as err:  # noqa: BLE001
+                self._drop_device()
+                result, last = {"Err": ""}, str(err)
+            else:
+                if not result.get("Err"):
+                    await self.async_request_refresh()
+                    return
+                last = str(result.get("Error") or result.get("Err"))
+
+            if attempt == 2 or not await self._async_repair(str(result.get("Err", ""))):
+                break
+
+        raise HomeAssistantError(f"the spa did not accept the command: {last}")
 
     async def async_shutdown(self) -> None:
         await super().async_shutdown()
