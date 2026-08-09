@@ -4,6 +4,7 @@ Only the framework is faked. The state machine under test - when to ask the clou
 new key, when to look for a new address, when to give up - is the real one.
 """
 import asyncio
+import concurrent.futures
 import pathlib
 import sys
 import types
@@ -103,7 +104,8 @@ _mod("homeassistant.const", Platform=_Enum(), CONF_EMAIL="email", CONF_PASSWORD=
      ATTR_TEMPERATURE="temperature", STATE_OFF="off", UnitOfTemperature=_Enum(),
      UnitOfTime=_Enum(), EntityCategory=_Enum())
 _mod("homeassistant.config_entries", ConfigEntry=dict)
-_mod("homeassistant.core", HomeAssistant=object, CALLBACK_TYPE=object)
+_mod("homeassistant.core", HomeAssistant=object, CALLBACK_TYPE=object,
+     callback=lambda fn: fn)
 _mod("homeassistant.exceptions", ConfigEntryAuthFailed=ConfigEntryAuthFailed,
      HomeAssistantError=HomeAssistantError)
 _mod("homeassistant.helpers")
@@ -113,6 +115,39 @@ _mod("homeassistant.helpers.update_coordinator",
      DataUpdateCoordinator=DataUpdateCoordinator, UpdateFailed=UpdateFailed)
 
 from intex_spa import coordinator as mod  # noqa: E402
+
+
+class FakeLink:
+    """Runs jobs inline so the tests stay deterministic and thread-free."""
+
+    def __init__(self, build_device, on_push, on_state):
+        self._build = build_device
+        self.on_push = on_push
+        self.device = None
+        self.rebuilds = 0
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def rebuild(self):
+        self.rebuilds += 1
+        self.device = None
+
+    def submit(self, func):
+        future = concurrent.futures.Future()
+        if self.device is None:
+            self.device = self._build()
+        try:
+            future.set_result(func(self.device))
+        except Exception as err:  # noqa: BLE001
+            future.set_exception(err)
+        return future
+
+
+mod.SpaLink = FakeLink
 
 
 class Entry:
@@ -232,12 +267,25 @@ async def main():
     await coord.async_set_dp("107", True)
     check("a write is reflected at once", coord.data.get("107") is True, str(coord.data))
 
-    # 8. cooldown blocks a second cloud lookup soon after the first
+    # 8. a pushed update merges and is published without any polling
+    coord, _ = build(key="NEWKEY")
+    await coord._async_update_data()
+    coord._apply_push({"107": True})
+    check("a pushed update merges into the state", coord.data.get("107") is True, str(coord.data))
+    check("a push keeps the points it did not mention", coord.data.get("110") == 90)
+
+    # 9. a rotated key rebuilds the connection rather than reusing a dead socket
+    coord, _ = build(key="OLDKEY")
+    await coord._async_update_data()
+    check("the link was rebuilt after the key changed", coord._link.rebuilds >= 1,
+          f"rebuilds={coord._link.rebuilds}")
+
+    # 10. cooldown blocks a second cloud lookup soon after the first
     FakeCloud.logins = 0
     coord, _ = build(key="OLDKEY")
     await coord._async_update_data()
     coord.entry.data = {**coord.entry.data, "local_key": "OLDKEY"}
-    coord._drop_device()
+    coord._link.rebuild()
     try:
         await coord._async_update_data()
     except UpdateFailed:

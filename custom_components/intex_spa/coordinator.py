@@ -1,16 +1,18 @@
-"""Owns the single local connection to the spa and keeps the local key valid.
+"""Keeps the spa's state current and its credentials valid.
 
-The spa accepts exactly one local client at a time, so everything funnels through one
-coordinator. tinytuya is synchronous, so every call is pushed to the executor.
+Updates arrive by push: a background thread holds the local connection open and the spa
+announces changes as they happen, including ones made from the Intex Link app. The
+periodic poll that remains is a liveness check, not the main source of data.
 
-The interesting part is recovery. Re-pairing the spa in the Intex Link app rotates the
+The other job here is recovery. Re-pairing the spa in the Intex Link app rotates the
 local key, which silently breaks the LAN connection and normally means editing the
-integration by hand. Here a decrypt failure triggers a cloud lookup, the fresh key is
-written back to the config entry, and the connection is rebuilt.
+integration by hand. A decrypt failure triggers a cloud lookup, the fresh key is written
+back to the config entry, and the connection is rebuilt.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import timedelta
@@ -18,7 +20,7 @@ from typing import Any
 
 import tinytuya
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
@@ -36,6 +38,7 @@ from .const import (
     DOMAIN,
 )
 from .discovery import find_host
+from .link import SpaLink
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,31 +53,35 @@ HOST_REDISCOVER_COOLDOWN = 300.0
 # How long to let the spa settle before re-reading after a write.
 CONFIRM_DELAY = 2.0
 
+# How long a command may wait for the socket thread before it is treated as stuck.
+COMMAND_TIMEOUT = 15.0
+
 
 class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Polls the spa over the LAN and repairs the connection when it breaks."""
+    """Holds the accumulated data point state and repairs the connection when it breaks."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
+            # Pushes carry the news; this is only a liveness check.
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
         self.entry = entry
-        self._device: tinytuya.Device | None = None
         self._last_key_refresh = 0.0
         self._last_host_lookup = 0.0
-        # Accumulated view of the spa. On a persistent connection Tuya answers with only
-        # the data points that changed, so replacing this wholesale would make every
-        # absent point read as unknown and entities would flicker between real and blank.
-        self._dps: dict[str, Any] = {}
         self._confirm_cancel: CALLBACK_TYPE | None = None
+        # Accumulated view of the spa. Tuya answers with only the data points that
+        # changed, so replacing this wholesale would make every absent point read as
+        # unknown and entities would flicker between their real value and blank.
+        self._dps: dict[str, Any] = {}
+        self._link = SpaLink(self._build_device, self._push_from_thread, self._state_from_thread)
 
     # --- connection ----------------------------------------------------------------
 
     def _build_device(self) -> tinytuya.Device:
-        """Construct the tinytuya client. Runs in the executor: it opens a socket."""
+        """Construct the tinytuya client. Runs on the link thread: it opens a socket."""
         data = self.entry.data
         device = tinytuya.Device(
             dev_id=data[CONF_DEVICE_ID],
@@ -83,22 +90,42 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             persist=True,
         )
         device.set_version(float(data[CONF_PROTOCOL]))
-        device.set_socketTimeout(5)
-        device.set_socketRetryLimit(1)
         return device
 
-    async def _async_device(self) -> tinytuya.Device:
-        if self._device is None:
-            self._device = await self.hass.async_add_executor_job(self._build_device)
-        return self._device
+    async def async_start(self) -> None:
+        await self.hass.async_add_executor_job(self._link.start)
 
-    def _drop_device(self) -> None:
-        device, self._device = self._device, None
-        if device is not None:
-            try:
-                device.close()
-            except Exception:  # noqa: BLE001 - closing a dead socket must never raise
-                pass
+    async def async_shutdown(self) -> None:
+        if self._confirm_cancel is not None:
+            self._confirm_cancel()
+            self._confirm_cancel = None
+        await super().async_shutdown()
+        await self.hass.async_add_executor_job(self._link.stop)
+
+    # --- callbacks from the link thread ---------------------------------------------
+
+    def _push_from_thread(self, dps: dict[str, Any]) -> None:
+        self.hass.loop.call_soon_threadsafe(self._apply_push, dps)
+
+    @callback
+    def _apply_push(self, dps: dict[str, Any]) -> None:
+        self._dps.update(dps)
+        self.async_set_updated_data(dict(self._dps))
+
+    def _state_from_thread(self, connected: bool, detail: str) -> None:
+        if connected:
+            _LOGGER.debug("Connected to the spa")
+        else:
+            _LOGGER.debug("Disconnected from the spa: %s", detail)
+
+    async def _async_run(self, func) -> Any:
+        """Run something on the socket thread and wait for it."""
+        future = self._link.submit(func)
+        try:
+            return await asyncio.wait_for(asyncio.wrap_future(future), COMMAND_TIMEOUT)
+        except TimeoutError as err:
+            future.cancel()
+            raise ConnectionError("the spa did not answer in time") from err
 
     # --- recovery ------------------------------------------------------------------
 
@@ -127,7 +154,7 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.hass.config_entries.async_update_entry(
             self.entry, data={**data, CONF_LOCAL_KEY: key}
         )
-        self._drop_device()
+        self._link.rebuild()
         return True
 
     async def _rediscover_host(self) -> bool:
@@ -145,10 +172,8 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.hass.config_entries.async_update_entry(
             self.entry, data={**self.entry.data, CONF_HOST: host}
         )
-        self._drop_device()
+        self._link.rebuild()
         return True
-
-    # --- polling -------------------------------------------------------------------
 
     async def _async_repair(self, error: str) -> bool:
         """Try once to make the connection work again. True when something changed.
@@ -160,21 +185,17 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return await self._refresh_local_key() or await self._rediscover_host()
         return await self._rediscover_host() or await self._refresh_local_key()
 
-    def _read_status(self, device: tinytuya.Device) -> dict[str, Any]:
-        return device.status() or {}
+    # --- polling -------------------------------------------------------------------
 
     async def _async_update_data(self) -> dict[str, Any]:
         last: str = "no response"
 
         for attempt in (1, 2):
-            device = await self._async_device()
+            status: dict[str, Any] = {}
             try:
-                status = await self.hass.async_add_executor_job(self._read_status, device)
+                status = await self._async_run(lambda device: device.status() or {})
             except Exception as err:  # noqa: BLE001 - tinytuya raises bare exceptions
-                # A raised socket error is as good a repair trigger as a returned one,
-                # so fall through instead of giving up on this cycle.
-                self._drop_device()
-                status, last = {}, str(err)
+                last = str(err)
             else:
                 dps = status.get("dps")
                 if isinstance(dps, dict) and dps:
@@ -194,46 +215,6 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # --- writing -------------------------------------------------------------------
 
-    def _write(self, device: tinytuya.Device, dp: str, value: Any) -> dict[str, Any]:
-        return device.set_value(dp, value, nowait=False) or {}
-
-    async def async_set_dp(self, dp: str, value: Any) -> None:
-        """Set one data point, then refresh so the UI reflects reality rather than hope.
-
-        Repairs on the same terms as polling. Without this, the first press of a button
-        after the key rotated would fail with an error toast even though the next poll
-        would have fixed things seconds later.
-        """
-        last: str = "no response"
-
-        for attempt in (1, 2):
-            device = await self._async_device()
-            try:
-                result = await self.hass.async_add_executor_job(self._write, device, dp, value)
-            except Exception as err:  # noqa: BLE001
-                self._drop_device()
-                result, last = {"Err": ""}, str(err)
-            else:
-                if not result.get("Err"):
-                    # Show the change at once, otherwise the UI sits on the old value
-                    # until the next poll. Order matters: the spa often echoes its
-                    # previous state in the reply, so what was asked for is applied
-                    # last and wins over a stale echo.
-                    if isinstance(result.get("dps"), dict):
-                        self._dps.update(result["dps"])
-                    self._dps[dp] = value
-                    self.async_set_updated_data(dict(self._dps))
-                    # Confirm shortly afterwards rather than immediately: polled at once,
-                    # the spa frequently still reports the old value and undoes this.
-                    self._schedule_confirmation()
-                    return
-                last = str(result.get("Error") or result.get("Err"))
-
-            if attempt == 2 or not await self._async_repair(str(result.get("Err", ""))):
-                break
-
-        raise HomeAssistantError(f"the spa did not accept the command: {last}")
-
     def _schedule_confirmation(self) -> None:
         """Re-read a couple of seconds after a write, once the spa has caught up."""
         if self._confirm_cancel is not None:
@@ -245,9 +226,31 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._confirm_cancel = async_call_later(self.hass, CONFIRM_DELAY, _confirm)
 
-    async def async_shutdown(self) -> None:
-        if self._confirm_cancel is not None:
-            self._confirm_cancel()
-            self._confirm_cancel = None
-        await super().async_shutdown()
-        await self.hass.async_add_executor_job(self._drop_device)
+    async def async_set_dp(self, dp: str, value: Any) -> None:
+        """Set one data point and show it at once, rather than waiting to be told."""
+        last: str = "no response"
+
+        for attempt in (1, 2):
+            result: dict[str, Any] = {}
+            try:
+                result = await self._async_run(
+                    lambda device: device.set_value(dp, value, nowait=False) or {}
+                )
+            except Exception as err:  # noqa: BLE001
+                last = str(err)
+            else:
+                if not result.get("Err"):
+                    # Order matters: the spa often echoes its previous state in the
+                    # reply, so what was asked for is applied last and wins.
+                    if isinstance(result.get("dps"), dict):
+                        self._dps.update(result["dps"])
+                    self._dps[dp] = value
+                    self.async_set_updated_data(dict(self._dps))
+                    self._schedule_confirmation()
+                    return
+                last = str(result.get("Error") or result.get("Err"))
+
+            if attempt == 2 or not await self._async_repair(str(result.get("Err", ""))):
+                break
+
+        raise HomeAssistantError(f"the spa did not accept the command: {last}")

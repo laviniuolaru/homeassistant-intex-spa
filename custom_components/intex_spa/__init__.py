@@ -29,6 +29,8 @@ logging.getLogger("tinytuya").setLevel(logging.INFO)
 async def async_setup_entry(hass: HomeAssistant, entry: IntexSpaConfigEntry) -> bool:
     """Set up the spa from a config entry."""
     coordinator = IntexSpaCoordinator(hass, entry)
+    # The socket thread has to be running before anything can be asked of the spa.
+    await coordinator.async_start()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 

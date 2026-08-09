@@ -37,6 +37,13 @@ switch: with heating enabled it reads `heat` while the water is below target and
 once it has arrived. So it tells you whether the spa is heating *right now*, which is the
 signal you want when correlating against an electricity meter.
 
+## Live updates
+
+The connection is held open and the spa announces changes as they happen, so turning the
+bubbles on from the Intex Link app shows up in Home Assistant straight away rather than
+whenever a poll next comes round. A read every thirty seconds remains, purely as a
+liveness check.
+
 ## Self-repair
 
 Re-pairing the spa in the Intex Link app **rotates the local key**. With a generic Tuya
