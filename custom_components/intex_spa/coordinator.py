@@ -29,6 +29,7 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_HOST,
     CONF_LOCAL_KEY,
+    CONF_PASSWORD_MD5,
     CONF_PROTOCOL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -102,7 +103,7 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data = self.entry.data
         cloud = IntexCloud(async_get_clientsession(self.hass), data["client_id"])
         try:
-            await cloud.login(data["email"], data["password"], data[CONF_COUNTRY])
+            await cloud.login(data["email"], data[CONF_PASSWORD_MD5], data[CONF_COUNTRY])
             key = await cloud.local_key_for(data[CONF_DEVICE_ID])
         except IntexAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err

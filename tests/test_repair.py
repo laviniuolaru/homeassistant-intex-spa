@@ -123,7 +123,8 @@ class Hass:
 
 def build(key="OLDKEY", host="192.168.1.133"):
     entry = Entry({
-        "email": "a@b.c", "password": "x", "country_code": "40", "client_id": "cid",
+        "email": "a@b.c", "password_md5": "d41d8cd98f00b204e9800998ecf8427e",
+        "country_code": "40", "client_id": "cid",
         "device_id": "dev", "local_key": key, "host": host, "protocol_version": "3.5",
     })
     return mod.IntexSpaCoordinator(Hass(), entry), entry

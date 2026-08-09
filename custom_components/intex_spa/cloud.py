@@ -16,7 +16,6 @@ import hmac
 import json
 import logging
 import os
-import re
 import time
 import uuid
 
@@ -33,8 +32,6 @@ SIGN_KEYS = frozenset({
     "a", "v", "lat", "lon", "lang", "deviceId", "appVersion", "ttid", "h5", "h5Token",
     "os", "clientId", "postData", "time", "requestId", "et", "n4h5", "sid", "chKey", "sp",
 })
-
-_MD5_RE = re.compile(r"[0-9a-fA-F]{32}")
 
 
 class IntexCloudError(Exception):
@@ -64,11 +61,12 @@ def _envelope_key(request_id: str, ecode: str | None) -> bytes:
     return hmac.new(request_id.encode(), msg.encode(), hashlib.sha256).hexdigest()[:16].encode()
 
 
-def _password_md5(password: str) -> str:
-    """Accept a plaintext password, or an already-hashed one so it need not be stored raw."""
-    stripped = password.strip()
-    if _MD5_RE.fullmatch(stripped):
-        return stripped.lower()
+def password_digest(password: str) -> str:
+    """Hash a password the way the login expects.
+
+    The API never sees the password itself, only this digest, so nothing else has to be
+    kept. Call this once while the user is typing and store only the result.
+    """
     return hashlib.md5(password.encode()).hexdigest()
 
 
@@ -143,14 +141,18 @@ class IntexCloud:
             raise IntexCloudError(message)
         return result.get("result", result)
 
-    async def login(self, email: str, password: str, country_code: str) -> None:
-        """Two-step RSA login: fetch a token plus public key, then send the encrypted digest."""
+    async def login(self, email: str, password_md5: str, country_code: str) -> None:
+        """Two-step RSA login: fetch a token plus public key, then send the encrypted digest.
+
+        Takes the digest, not the password: the caller hashes once at setup so the
+        plaintext never has to be written to disk.
+        """
         token = self._unwrap(await self._call(
             "smartlife.m.user.username.token.get", "2.0",
             post={"countryCode": country_code, "isUid": False, "username": email},
         ))
         public_key = rsa.RSAPublicNumbers(int(token["exponent"]), int(token["publicKey"])).public_key()
-        encrypted = public_key.encrypt(_password_md5(password).encode(), padding.PKCS1v15()).hex()
+        encrypted = public_key.encrypt(password_md5.encode(), padding.PKCS1v15()).hex()
 
         session = self._unwrap(await self._call(
             "smartlife.m.user.email.password.login", "3.0",

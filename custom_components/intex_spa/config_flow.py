@@ -23,12 +23,19 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .cloud import IntexAuthError, IntexCloud, IntexCloudError, new_client_id
+from .cloud import (
+    IntexAuthError,
+    IntexCloud,
+    IntexCloudError,
+    new_client_id,
+    password_digest,
+)
 from .const import (
     CONF_COUNTRY,
     CONF_DEVICE_ID,
     CONF_HOST,
     CONF_LOCAL_KEY,
+    CONF_PASSWORD_MD5,
     CONF_PROTOCOL,
     DEFAULT_COUNTRY,
     DEFAULT_PROTOCOL,
@@ -66,7 +73,9 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
             cloud = IntexCloud(async_get_clientsession(self.hass), client_id)
             try:
                 await cloud.login(
-                    user_input[CONF_EMAIL], user_input[CONF_PASSWORD], user_input[CONF_COUNTRY]
+                    user_input[CONF_EMAIL],
+                    password_digest(user_input[CONF_PASSWORD]),
+                    user_input[CONF_COUNTRY],
                 )
                 devices = await cloud.devices()
             except IntexAuthError:
@@ -80,7 +89,13 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
                 if not devices:
                     errors["base"] = "no_devices"
                 else:
-                    self._credentials = {**user_input, "client_id": client_id}
+                    # Keep only the digest; the plaintext dies with this function.
+                    self._credentials = {
+                        CONF_EMAIL: user_input[CONF_EMAIL],
+                        CONF_COUNTRY: user_input[CONF_COUNTRY],
+                        CONF_PASSWORD_MD5: password_digest(user_input[CONF_PASSWORD]),
+                        "client_id": client_id,
+                    }
                     self._devices = devices
                     if len(devices) == 1:
                         return await self._async_finish(devices[0])
@@ -148,7 +163,7 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
             title=device["name"],
             data={
                 CONF_EMAIL: self._credentials[CONF_EMAIL],
-                CONF_PASSWORD: self._credentials[CONF_PASSWORD],
+                CONF_PASSWORD_MD5: self._credentials[CONF_PASSWORD_MD5],
                 CONF_COUNTRY: self._credentials[CONF_COUNTRY],
                 "client_id": self._credentials["client_id"],
                 CONF_DEVICE_ID: device["device_id"],
@@ -175,7 +190,9 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
             cloud = IntexCloud(async_get_clientsession(self.hass), entry.data["client_id"])
             try:
                 await cloud.login(
-                    entry.data[CONF_EMAIL], user_input[CONF_PASSWORD], entry.data[CONF_COUNTRY]
+                    entry.data[CONF_EMAIL],
+                    password_digest(user_input[CONF_PASSWORD]),
+                    entry.data[CONF_COUNTRY],
                 )
                 key = await cloud.local_key_for(entry.data[CONF_DEVICE_ID])
             except IntexAuthError:
@@ -187,7 +204,7 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
                     entry,
                     data={
                         **entry.data,
-                        CONF_PASSWORD: user_input[CONF_PASSWORD],
+                        CONF_PASSWORD_MD5: password_digest(user_input[CONF_PASSWORD]),
                         **({CONF_LOCAL_KEY: key} if key else {}),
                     },
                 )

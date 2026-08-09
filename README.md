@@ -59,9 +59,26 @@ United Kingdom.
 
 ## Things you should know
 
-**Your password is stored in Home Assistant's configuration.** It has to be, so the key
-can be renewed without you. Home Assistant keeps config entries in plain text under
-`.storage`, the same as every other cloud integration.
+**Credentials are kept, but not your actual password.** Renewing the key without you
+means being able to sign in without you, so something has to be stored. The Tuya login
+only ever receives `MD5(password)`, so that digest is what gets hashed at setup and
+written to the config entry - the plaintext is discarded and never reaches disk.
+
+Be clear about what that does and does not buy you. It means a leaked backup does not
+hand someone a password to try against your email. It does **not** protect the Intex
+account itself: the digest is enough to sign in there. And MD5 is unsalted, so a weak or
+common password can be recovered from it in seconds. Use a password you do not use
+anywhere else.
+
+Home Assistant stores config entries as plain text under `.storage` and does not encrypt
+them, which also means they travel inside backups. That is a
+[long-standing complaint](https://community.home-assistant.io/t/wth-2025-a-secret-is-secret-why-are-passwords-in-plain-text-in-the-config-entries-file/809838)
+about Home Assistant rather than anything specific to this integration, but it is worth
+knowing.
+
+If you would rather store nothing at all, do not use this integration - use
+[tuya-local](https://github.com/make-all/tuya-local) with a key you fetch by hand. You
+lose the automatic recovery, which is the whole point of this one.
 
 **The app credentials are extracted from the Intex Link APK.** They are the same for
 every user and are already published elsewhere. If Intex or Tuya ever rotate them, sign-in
