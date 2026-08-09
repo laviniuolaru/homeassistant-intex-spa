@@ -52,6 +52,9 @@ class DataUpdateCoordinator:
     async def async_request_refresh(self):
         self.refreshes += 1
 
+    def async_set_updated_data(self, data):
+        self.data = data
+
     async def async_shutdown(self):
         pass
 
@@ -80,8 +83,14 @@ class FakeDevice:
     def _ok(self):
         return self.key == self.real_key and self.address == self.real_host
 
+    replies = None      # when set, a list of payloads to hand out in order
+
     def status(self):
-        return {"dps": {"110": 90}} if self._ok() else {"Err": "914", "Error": "decrypt failed"}
+        if not self._ok():
+            return {"Err": "914", "Error": "decrypt failed"}
+        if FakeDevice.replies:
+            return FakeDevice.replies.pop(0)
+        return {"dps": {"110": 90}}
 
     def set_value(self, dp, value, nowait=False):
         return {"dps": {dp: value}} if self._ok() else {"Err": "914", "Error": "decrypt failed"}
@@ -199,7 +208,30 @@ async def main():
     check("the cloud was not hammered in a loop", FakeCloud.logins <= 1, f"logins={FakeCloud.logins}")
     FakeDevice.real_key = "NEWKEY"
 
-    # 6. cooldown blocks a second cloud lookup soon after the first
+    # 6. partial payloads must merge, not wipe what was already known
+    FakeDevice.replies = [
+        {"dps": {"104": True, "106": False, "110": 90}},   # full picture
+        {"dps": {"106": True}},                            # only what changed
+        {},                                                # nothing changed at all
+    ]
+    coord, _ = build(key="NEWKEY")
+    first = await coord._async_update_data()
+    check("first poll keeps every point", first == {"104": True, "106": False, "110": 90}, str(first))
+    second = await coord._async_update_data()
+    check("a partial reply merges instead of wiping",
+          second == {"104": True, "106": True, "110": 90}, str(second))
+    third = await coord._async_update_data()
+    check("an empty reply keeps the last known state",
+          third == {"104": True, "106": True, "110": 90}, str(third))
+    FakeDevice.replies = None
+
+    # 7. a write shows up immediately, without waiting for the next poll
+    coord, _ = build(key="NEWKEY")
+    await coord._async_update_data()
+    await coord.async_set_dp("107", True)
+    check("a write is reflected at once", coord.data.get("107") is True, str(coord.data))
+
+    # 8. cooldown blocks a second cloud lookup soon after the first
     FakeCloud.logins = 0
     coord, _ = build(key="OLDKEY")
     await coord._async_update_data()

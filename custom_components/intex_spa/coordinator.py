@@ -61,6 +61,10 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._device: tinytuya.Device | None = None
         self._last_key_refresh = 0.0
         self._last_host_lookup = 0.0
+        # Accumulated view of the spa. On a persistent connection Tuya answers with only
+        # the data points that changed, so replacing this wholesale would make every
+        # absent point read as unknown and entities would flicker between real and blank.
+        self._dps: dict[str, Any] = {}
 
     # --- connection ----------------------------------------------------------------
 
@@ -169,7 +173,12 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 dps = status.get("dps")
                 if isinstance(dps, dict) and dps:
-                    return dps
+                    self._dps.update(dps)
+                    return dict(self._dps)
+                # An empty reply is normal once nothing has changed, as long as a full
+                # picture was seen at least once.
+                if self._dps and not status.get("Err"):
+                    return dict(self._dps)
                 last = str(status.get("Error") or status.get("Err") or "no data points")
 
             _LOGGER.debug("Spa gave nothing back (attempt %d): %s", attempt, last)
@@ -201,6 +210,13 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 result, last = {"Err": ""}, str(err)
             else:
                 if not result.get("Err"):
+                    # Show the change at once. Waiting for the next poll would let the
+                    # UI snap back to the old value for a second or two, and the spa
+                    # often answers a write with only the point that changed.
+                    self._dps[dp] = value
+                    if isinstance(result.get("dps"), dict):
+                        self._dps.update(result["dps"])
+                    self.async_set_updated_data(dict(self._dps))
                     await self.async_request_refresh()
                     return
                 last = str(result.get("Error") or result.get("Err"))
