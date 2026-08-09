@@ -94,7 +94,7 @@ class _Beacons(asyncio.DatagramProtocol):
         _LOGGER.debug("Tuya discovery socket error: %s", exc)
 
 
-async def discover(timeout: float = 12.0) -> dict[str, str]:
+async def discover(timeout: float = 20.0) -> dict[str, str]:
     """Listen on every beacon port and return {device_id: ip}.
 
     Ports already taken by another listener on the host are skipped rather than
@@ -103,6 +103,8 @@ async def discover(timeout: float = 12.0) -> dict[str, str]:
     loop = asyncio.get_running_loop()
     found: dict[str, str] = {}
     transports = []
+    opened: list[int] = []
+    blocked: list[int] = []
 
     for port in PORTS:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -114,15 +116,26 @@ async def discover(timeout: float = 12.0) -> dict[str, str]:
         try:
             sock.bind(("", port))
         except OSError as err:
+            # Another Tuya integration listening here is the usual reason.
             _LOGGER.debug("Tuya discovery: port %d unavailable (%s)", port, err)
+            blocked.append(port)
             sock.close()
             continue
         transport, _ = await loop.create_datagram_endpoint(lambda: _Beacons(found), sock=sock)
         transports.append(transport)
+        opened.append(port)
 
     if not transports:
-        _LOGGER.warning("Tuya discovery: none of the beacon ports could be opened")
+        _LOGGER.warning(
+            "Tuya discovery: could not open any beacon port (%s). Another Tuya "
+            "integration is probably already listening; the address must be entered by hand",
+            ", ".join(str(p) for p in blocked) or "none tried",
+        )
         return found
+
+    _LOGGER.debug("Tuya discovery listening %.0fs on %s%s", timeout,
+                  ", ".join(str(p) for p in opened),
+                  f" (blocked: {', '.join(str(p) for p in blocked)})" if blocked else "")
 
     try:
         await asyncio.sleep(timeout)
@@ -130,10 +143,17 @@ async def discover(timeout: float = 12.0) -> dict[str, str]:
         for transport in transports:
             transport.close()
 
-    _LOGGER.debug("Tuya discovery saw %d device(s)", len(found))
+    if found:
+        _LOGGER.debug("Tuya discovery saw %d device(s): %s", len(found), ", ".join(found))
+    else:
+        _LOGGER.warning(
+            "Tuya discovery heard nothing in %.0fs on port(s) %s. Either the spa is on a "
+            "different network segment, or another integration is consuming the beacons",
+            timeout, ", ".join(str(p) for p in opened),
+        )
     return found
 
 
-async def find_host(device_id: str, timeout: float = 12.0) -> str | None:
+async def find_host(device_id: str, timeout: float = 20.0) -> str | None:
     """Return the LAN address of one device, or None if it stayed quiet."""
     return (await discover(timeout)).get(device_id)
