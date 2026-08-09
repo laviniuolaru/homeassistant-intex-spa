@@ -21,9 +21,10 @@ from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
-# Short enough that a queued command is picked up promptly, long enough to spend most of
-# the time asleep in the socket rather than spinning.
-SOCKET_TIMEOUT = 1.0
+# This is how long a queued command may wait before the loop comes round to it, so it is
+# also the delay a user feels after pressing a button. Each expiry is one socket syscall
+# that returns empty, so four a second costs nothing measurable.
+SOCKET_TIMEOUT = 0.25
 HEARTBEAT_INTERVAL = 10.0
 RECONNECT_DELAY = 5.0
 # tinytuya connects while the device object is built, using its own timeout.
