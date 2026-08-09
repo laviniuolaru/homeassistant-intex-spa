@@ -103,11 +103,12 @@ _mod("homeassistant.const", Platform=_Enum(), CONF_EMAIL="email", CONF_PASSWORD=
      ATTR_TEMPERATURE="temperature", STATE_OFF="off", UnitOfTemperature=_Enum(),
      UnitOfTime=_Enum(), EntityCategory=_Enum())
 _mod("homeassistant.config_entries", ConfigEntry=dict)
-_mod("homeassistant.core", HomeAssistant=object)
+_mod("homeassistant.core", HomeAssistant=object, CALLBACK_TYPE=object)
 _mod("homeassistant.exceptions", ConfigEntryAuthFailed=ConfigEntryAuthFailed,
      HomeAssistantError=HomeAssistantError)
 _mod("homeassistant.helpers")
 _mod("homeassistant.helpers.aiohttp_client", async_get_clientsession=lambda hass: None)
+_mod("homeassistant.helpers.event", async_call_later=lambda hass, delay, cb: (lambda: None))
 _mod("homeassistant.helpers.update_coordinator",
      DataUpdateCoordinator=DataUpdateCoordinator, UpdateFailed=UpdateFailed)
 
@@ -194,7 +195,7 @@ async def main():
     coord, entry = build(key="OLDKEY")
     await coord.async_set_dp("107", True)
     check("a command repairs and then succeeds", entry.data["local_key"] == "NEWKEY")
-    check("the command asked for a refresh afterwards", coord.refreshes == 1)
+    check("the command scheduled a confirmation", coord._confirm_cancel is not None)
 
     # 5. a failure the cloud cannot fix gives up instead of looping
     FakeCloud.logins = 0

@@ -15,7 +15,7 @@ CONF_PROTOCOL: Final = "protocol_version"
 
 DEFAULT_COUNTRY: Final = "40"          # Romania; the app sends the dialling code
 DEFAULT_PROTOCOL: Final = "3.5"
-DEFAULT_SCAN_INTERVAL: Final = 15      # seconds
+DEFAULT_SCAN_INTERVAL: Final = 5       # seconds; a read costs ~15 ms
 
 # --- Intex Link app constants, extracted from the APK; identical for every user ---
 # Published in bpietroiu/homeassistant-intex-pool (MIT). The Tuya IoT developer

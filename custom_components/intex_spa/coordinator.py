@@ -18,9 +18,10 @@ from typing import Any
 
 import tinytuya
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .cloud import IntexAuthError, IntexCloud, IntexCloudError
@@ -46,6 +47,9 @@ KEY_ERRORS = frozenset({"914", "904"})
 KEY_REFRESH_COOLDOWN = 600.0
 HOST_REDISCOVER_COOLDOWN = 300.0
 
+# How long to let the spa settle before re-reading after a write.
+CONFIRM_DELAY = 2.0
+
 
 class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Polls the spa over the LAN and repairs the connection when it breaks."""
@@ -65,6 +69,7 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # the data points that changed, so replacing this wholesale would make every
         # absent point read as unknown and entities would flicker between real and blank.
         self._dps: dict[str, Any] = {}
+        self._confirm_cancel: CALLBACK_TYPE | None = None
 
     # --- connection ----------------------------------------------------------------
 
@@ -210,14 +215,17 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 result, last = {"Err": ""}, str(err)
             else:
                 if not result.get("Err"):
-                    # Show the change at once. Waiting for the next poll would let the
-                    # UI snap back to the old value for a second or two, and the spa
-                    # often answers a write with only the point that changed.
-                    self._dps[dp] = value
+                    # Show the change at once, otherwise the UI sits on the old value
+                    # until the next poll. Order matters: the spa often echoes its
+                    # previous state in the reply, so what was asked for is applied
+                    # last and wins over a stale echo.
                     if isinstance(result.get("dps"), dict):
                         self._dps.update(result["dps"])
+                    self._dps[dp] = value
                     self.async_set_updated_data(dict(self._dps))
-                    await self.async_request_refresh()
+                    # Confirm shortly afterwards rather than immediately: polled at once,
+                    # the spa frequently still reports the old value and undoes this.
+                    self._schedule_confirmation()
                     return
                 last = str(result.get("Error") or result.get("Err"))
 
@@ -226,6 +234,20 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         raise HomeAssistantError(f"the spa did not accept the command: {last}")
 
+    def _schedule_confirmation(self) -> None:
+        """Re-read a couple of seconds after a write, once the spa has caught up."""
+        if self._confirm_cancel is not None:
+            self._confirm_cancel()
+
+        async def _confirm(_now) -> None:
+            self._confirm_cancel = None
+            await self.async_request_refresh()
+
+        self._confirm_cancel = async_call_later(self.hass, CONFIRM_DELAY, _confirm)
+
     async def async_shutdown(self) -> None:
+        if self._confirm_cancel is not None:
+            self._confirm_cancel()
+            self._confirm_cancel = None
         await super().async_shutdown()
         await self.hass.async_add_executor_job(self._drop_device)
