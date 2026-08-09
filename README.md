@@ -87,6 +87,12 @@ If you would rather store nothing at all, do not use this integration - use
 [tuya-local](https://github.com/make-all/tuya-local) with a key you fetch by hand. You
 lose the automatic recovery, which is the whole point of this one.
 
+**How much this talks to Intex's servers.** Once, at setup, to read the device id and
+key. After that only when the local connection stops decrypting - which means the key
+was rotated - and never more than once every ten minutes however badly the local side is
+failing. Everything else happens on your own network. Requests identify themselves as
+this integration in the `User-Agent` header rather than passing for the Intex Link app.
+
 **The app credentials are extracted from the Intex Link APK.** They are the same for
 every user and are already published elsewhere. If Intex or Tuya ever rotate them, sign-in
 stops working for everyone until they are updated here.

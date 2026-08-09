@@ -23,7 +23,7 @@ import aiohttp
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from .const import APP_KEY, APP_VERSION, BASE_URL, CH_KEY, SECRET, TTID
+from .const import APP_KEY, APP_VERSION, BASE_URL, CH_KEY, SECRET, TTID, USER_AGENT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -134,6 +134,12 @@ class IntexCloud:
             async with self._session.post(
                 f"{BASE_URL}/api.json",
                 data=params,
+                # Say who is actually calling. The signed parameters have to match what
+                # the app sends or the request is rejected, but nothing forces the
+                # User-Agent to claim to be the app - and passing for the official
+                # client is the one thing that turns "a user automating their own
+                # device" into an impersonation complaint.
+                headers={"User-Agent": USER_AGENT},
                 # A redirect would re-POST the form - which carries the credentials -
                 # to wherever it pointed.
                 allow_redirects=False,

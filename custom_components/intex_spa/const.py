@@ -30,6 +30,13 @@ _SECRET2: Final = "c49n45ude4scf3jasrnuc8dpsyd3tftm"
 SECRET: Final = f"{PACKAGE}_{_CERT}_{_SECRET1}_{_SECRET2}"
 TTID: Final = "sdk_international@" + APP_KEY
 BASE_URL: Final = "https://a1.tuyaeu.com"
+
+# Sent as the HTTP User-Agent so the operator can tell this apart from the real app,
+# and reach the project if the traffic ever bothers them.
+USER_AGENT: Final = (
+    "homeassistant-intex-spa/%s (+https://github.com/laviniuolaru/homeassistant-intex-spa)"
+    % "0.3.2"
+)
 APP_VERSION: Final = "1.1.11"
 
 # --- Data points ---
