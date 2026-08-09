@@ -21,12 +21,16 @@
       "host": {
         "title": "Adresa din rețea",
         "description": "{name} nu s-a anunțat în rețea, deci adresa nu a putut fi găsită automat. Introdu-o manual și rezerv-o în router ca să nu se schimbe.",
-        "data": { "host": "Adresă IP" }
+        "data": {
+          "host": "Adresă IP"
+        }
       },
       "reauth_confirm": {
         "title": "Autentificare din nou",
         "description": "Parola salvată pentru {email} nu mai este acceptată.",
-        "data": { "password": "Parolă" }
+        "data": {
+          "password": "Parolă"
+        }
       }
     },
     "error": {
@@ -42,18 +46,42 @@
   },
   "entity": {
     "switch": {
-      "power": { "name": "Pornire" },
-      "filtration": { "name": "Filtrare" },
-      "bubbles": { "name": "Bule" },
-      "jets": { "name": "Jeturi" },
-      "sanitizer": { "name": "Sterilizare" }
+      "power": {
+        "name": "Pornire"
+      },
+      "filtration": {
+        "name": "Filtrare"
+      },
+      "bubbles": {
+        "name": "Bule"
+      },
+      "jets": {
+        "name": "Jeturi"
+      },
+      "sanitizer": {
+        "name": "Sterilizare"
+      }
     },
     "sensor": {
-      "water_temperature": { "name": "Temperatura apei" },
-      "time_remaining": { "name": "Timp rămas" }
+      "water_temperature": {
+        "name": "Temperatura apei"
+      },
+      "time_remaining": {
+        "name": "Timp rămas"
+      },
+      "heat_state": {
+        "name": "Stare încălzire",
+        "state": {
+          "off": "Oprit",
+          "heat": "Încălzește",
+          "warm": "La temperatură"
+        }
+      }
     },
     "binary_sensor": {
-      "heating": { "name": "Încălzire" }
+      "heating": {
+        "name": "Încălzire"
+      }
     }
   }
 }

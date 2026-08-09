@@ -21,12 +21,16 @@
       "host": {
         "title": "Network address",
         "description": "{name} did not announce itself on the network, so its address could not be found automatically. Enter it manually, and reserve it in your router so it does not change.",
-        "data": { "host": "IP address" }
+        "data": {
+          "host": "IP address"
+        }
       },
       "reauth_confirm": {
         "title": "Sign in again",
         "description": "The password stored for {email} is no longer accepted.",
-        "data": { "password": "Password" }
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -42,18 +46,42 @@
   },
   "entity": {
     "switch": {
-      "power": { "name": "Power" },
-      "filtration": { "name": "Filtration" },
-      "bubbles": { "name": "Bubbles" },
-      "jets": { "name": "Jets" },
-      "sanitizer": { "name": "Sanitizer" }
+      "power": {
+        "name": "Power"
+      },
+      "filtration": {
+        "name": "Filtration"
+      },
+      "bubbles": {
+        "name": "Bubbles"
+      },
+      "jets": {
+        "name": "Jets"
+      },
+      "sanitizer": {
+        "name": "Sanitizer"
+      }
     },
     "sensor": {
-      "water_temperature": { "name": "Water temperature" },
-      "time_remaining": { "name": "Time remaining" }
+      "water_temperature": {
+        "name": "Water temperature"
+      },
+      "time_remaining": {
+        "name": "Time remaining"
+      },
+      "heat_state": {
+        "name": "Heater state",
+        "state": {
+          "off": "Off",
+          "heat": "Heating",
+          "warm": "At temperature"
+        }
+      }
     },
     "binary_sensor": {
-      "heating": { "name": "Heating" }
+      "heating": {
+        "name": "Heating"
+      }
     }
   }
 }

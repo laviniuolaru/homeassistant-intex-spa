@@ -51,6 +51,8 @@ DP_HEAT_STATE: Final = "117"
 # heater enabled it reads "heat" while the water is below target and "warm" once
 # it is at or above it, so it reports whether the element is actually drawing power.
 HEAT_STATE_ACTIVE: Final = "heat"
+# The full vocabulary, in the order it makes sense to a reader: idle, working, arrived.
+HEAT_STATES: Final = ["off", "heat", "warm"]
 
 SWITCH_DPS: Final = {
     DP_POWER: ("power", "mdi:power"),
