@@ -5,18 +5,20 @@ import os
 import struct
 import pathlib
 import sys
-import types
+from importlib import util
 
-stub = types.ModuleType("aiohttp")
-stub.ClientError = Exception
-stub.ClientSession = object
-sys.modules["aiohttp"] = stub
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "custom_components"))
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes  # noqa: E402
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
 
-from intex_spa import discovery  # noqa: E402
+# Load the module straight from its file: importing it through the package would
+# pull in Home Assistant, which is not available when running the tests standalone.
+_spec = util.spec_from_file_location(
+    "discovery",
+    pathlib.Path(__file__).resolve().parents[1] / "custom_components/intex_spa/discovery.py",
+)
+discovery = util.module_from_spec(_spec)
+_spec.loader.exec_module(discovery)
 
 BEACON = {"ip": "192.168.1.133", "gwId": "bf6e232413d5826737m9jg", "version": "3.5"}
 CLEAR = json.dumps(BEACON).encode()
