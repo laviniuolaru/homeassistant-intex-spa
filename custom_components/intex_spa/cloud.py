@@ -28,6 +28,19 @@ from .const import APP_KEY, APP_VERSION, BASE_URL, CH_KEY, SECRET, TTID
 _LOGGER = logging.getLogger(__name__)
 
 # Only these keys take part in the signature, and only when non-empty.
+# Error codes that mean "come back later". Anything else is treated as transient too,
+# except the explicit credential codes below: only those are worth interrupting the user.
+TRANSIENT_CODES = frozenset({
+    "FREQUENT_REQUEST", "FREQUENCY_LIMIT", "EXCEED_LIMIT", "SYSTEM_ERROR",
+    "SERVER_BUSY", "TIMEOUT", "NETWORK_ERROR",
+})
+AUTH_CODES = frozenset({
+    "USER_PASSWD_WRONG", "PASSWD_INVALID", "USER_NOT_EXISTS", "USER_PASSWORD_ERROR",
+    "ACCOUNT_NOT_EXIST", "LOGIN_FAILED", "PERMISSION_DENIED", "TOKEN_INVALID",
+})
+
+REQUEST_TIMEOUT = 30
+
 SIGN_KEYS = frozenset({
     "a", "v", "lat", "lon", "lang", "deviceId", "appVersion", "ttid", "h5", "h5Token",
     "os", "clientId", "postData", "time", "requestId", "et", "n4h5", "sid", "chKey", "sp",
@@ -40,6 +53,11 @@ class IntexCloudError(Exception):
 
 class IntexAuthError(IntexCloudError):
     """Credentials were rejected. Retrying will not help."""
+
+
+def _clean(text: object) -> str:
+    """Server text is untrusted: it reaches logs and the UI, so strip control characters."""
+    return "".join(c for c in str(text) if c.isprintable())[:200]
 
 
 def _swap(md5hex: str) -> str:
@@ -57,6 +75,12 @@ def _sign(params: dict[str, str]) -> str:
 
 
 def _envelope_key(request_id: str, ecode: str | None) -> bytes:
+    """Derive the per-request envelope key exactly as the app does.
+
+    This is obfuscation, not confidentiality: the request id that keys the HMAC travels
+    in the clear in the same POST, so anyone who sees the request can derive it. TLS is
+    what actually protects these calls.
+    """
     msg = SECRET + (f"_{ecode}" if ecode else "")
     return hmac.new(request_id.encode(), msg.encode(), hashlib.sha256).hexdigest()[:16].encode()
 
@@ -110,35 +134,63 @@ class IntexCloud:
         params["sign"] = _sign(params)
 
         try:
-            async with self._session.post(f"{BASE_URL}/api.json", data=params) as resp:
+            async with self._session.post(
+                f"{BASE_URL}/api.json",
+                data=params,
+                # A redirect would re-POST the form - which carries the credentials -
+                # to wherever it pointed.
+                allow_redirects=False,
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+            ) as resp:
                 body = await resp.json(content_type=None)
         except aiohttp.ClientError as err:
             raise IntexCloudError(f"cannot reach the Intex cloud: {err}") from err
+        except TimeoutError as err:
+            raise IntexCloudError("the Intex cloud did not answer in time") from err
         except ValueError as err:
             raise IntexCloudError("the Intex cloud returned a malformed response") from err
 
+        if not isinstance(body, dict):
+            raise IntexCloudError("the Intex cloud returned an unexpected response")
+
+        # Decoding is as much part of talking to the server as the request was; a bad
+        # ciphertext or a truncated body must not escape as a raw exception.
         if isinstance(body.get("result"), str):
-            blob = base64.b64decode(body["result"])
-            body["result"] = json.loads(AESGCM(key).decrypt(blob[:12], blob[12:], None).decode())
+            try:
+                blob = base64.b64decode(body["result"])
+                body["result"] = json.loads(
+                    AESGCM(key).decrypt(blob[:12], blob[12:], None).decode()
+                )
+            except Exception as err:  # noqa: BLE001 - many libraries, many exception types
+                raise IntexCloudError("could not decode the Intex cloud response") from err
         return body
 
     @staticmethod
-    def _unwrap(body: dict):
+    def _fail(container: dict) -> None:
+        """Raise for a failure envelope. Only an explicit code may demand re-authentication.
+
+        Classifying on the free-text message would let any server string containing
+        "account" or "password" summon a password prompt, which is a decent phishing
+        primitive and a poor experience during an outage.
+        """
+        code = _clean(container.get("errorCode") or "").upper()
+        message = _clean(container.get("errorMsg") or code or "unknown error")
+        if code in AUTH_CODES:
+            raise IntexAuthError(message)
+        # Everything else, named or not, is treated as worth retrying: interrupting the
+        # user over a server hiccup is worse than waiting.
+        raise IntexCloudError(message)
+
+    @classmethod
+    def _unwrap(cls, body: dict):
+        # Failures arrive at the top level as often as nested under "result".
+        if body.get("success") is False:
+            cls._fail(body)
         result = body.get("result")
         if not isinstance(result, dict):
             return result
         if result.get("success") is False:
-            code = str(result.get("errorCode") or "").upper()
-            message = str(result.get("errorMsg") or code or "unknown error")
-            blob = f"{code} {message}".upper()
-            # Rate limiting is transient. Anything credential-shaped is not.
-            if any(w in blob for w in ("FREQUENT", "FREQUENCY", "LIMIT", "BUSY", "TIMEOUT")):
-                raise IntexCloudError(message)
-            if any(w in blob for w in ("PASSWD", "PASSWORD", "ACCOUNT", "USER_NOT", "USERNAME")):
-                raise IntexAuthError(message)
-            # Unknown failures are treated as transient: forcing the re-auth dialog on a
-            # server hiccup is worse than retrying.
-            raise IntexCloudError(message)
+            cls._fail(result)
         return result.get("result", result)
 
     async def login(self, email: str, password_md5: str, country_code: str) -> None:
@@ -151,7 +203,14 @@ class IntexCloud:
             "smartlife.m.user.username.token.get", "2.0",
             post={"countryCode": country_code, "isUid": False, "username": email},
         ))
-        public_key = rsa.RSAPublicNumbers(int(token["exponent"]), int(token["publicKey"])).public_key()
+        if not isinstance(token, dict) or not {"exponent", "publicKey", "token"} <= token.keys():
+            raise IntexCloudError("the Intex cloud did not return a login token")
+        try:
+            public_key = rsa.RSAPublicNumbers(
+                int(token["exponent"]), int(token["publicKey"])
+            ).public_key()
+        except (TypeError, ValueError) as err:
+            raise IntexCloudError("the Intex cloud returned an unusable login key") from err
         encrypted = public_key.encrypt(password_md5.encode(), padding.PKCS1v15()).hex()
 
         session = self._unwrap(await self._call(
@@ -165,8 +224,10 @@ class IntexCloud:
                 "token": token["token"],
             },
         ))
+        if not isinstance(session, dict) or "sid" not in session:
+            raise IntexCloudError("the Intex cloud did not return a session")
         self._sid = session["sid"]
-        self._ecode = session["ecode"]
+        self._ecode = session.get("ecode", "")
 
     async def _homes(self) -> list[dict]:
         return self._unwrap(await self._call("tuya.m.location.list", "1.0")) or []

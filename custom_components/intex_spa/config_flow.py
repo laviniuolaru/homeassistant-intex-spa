@@ -143,7 +143,11 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def _async_finish(self, device: dict[str, Any]) -> ConfigFlowResult:
         await self.async_set_unique_id(device["device_id"])
-        self._abort_if_unique_id_configured()
+        # Re-running setup for a spa that is already added is a reasonable way to fix a
+        # stale address or key, so hand over what was just fetched rather than refusing.
+        self._abort_if_unique_id_configured(
+            updates={CONF_LOCAL_KEY: device["local_key"]}, reload_on_update=True
+        )
 
         if device["product_id"] and device["product_id"] not in KNOWN_PRODUCTS:
             _LOGGER.info(
@@ -153,7 +157,7 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
             )
 
         self._chosen = device
-        host = await find_host(device["device_id"])
+        host = await find_host(self.hass, device["device_id"])
         if not host:
             return await self.async_step_host()
         return self._create(device, host)
@@ -199,15 +203,23 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except IntexCloudError:
                 errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error while signing in again")
+                errors["base"] = "unknown"
             else:
-                return self.async_update_reload_and_abort(
-                    entry,
-                    data={
-                        **entry.data,
-                        CONF_PASSWORD_MD5: password_digest(user_input[CONF_PASSWORD]),
-                        **({CONF_LOCAL_KEY: key} if key else {}),
-                    },
-                )
+                if key is None:
+                    # The credentials work, but this account does not own this spa.
+                    # Storing them would leave the entry unable to renew its key.
+                    errors["base"] = "wrong_account"
+                else:
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        data={
+                            **entry.data,
+                            CONF_PASSWORD_MD5: password_digest(user_input[CONF_PASSWORD]),
+                            CONF_LOCAL_KEY: key,
+                        },
+                    )
 
         return self.async_show_form(
             step_id="reauth_confirm",

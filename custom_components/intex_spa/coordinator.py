@@ -56,6 +56,11 @@ CONFIRM_DELAY = 2.0
 # How long a command may wait for the socket thread before it is treated as stuck.
 COMMAND_TIMEOUT = 15.0
 
+# How long the cached picture may stand in for a live one. Past this the spa is treated
+# as gone and the entities go unavailable, rather than showing values from before it
+# was unplugged as though they were current.
+STALE_AFTER = 120.0
+
 
 class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Holds the accumulated data point state and repairs the connection when it breaks."""
@@ -67,6 +72,9 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             name=DOMAIN,
             # Pushes carry the news; this is only a liveness check.
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            # The poll returns the same accumulated picture when nothing changed; there
+            # is no reason to wake every entity for it.
+            always_update=False,
         )
         self.entry = entry
         self._last_key_refresh = 0.0
@@ -76,7 +84,12 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # changed, so replacing this wholesale would make every absent point read as
         # unknown and entities would flicker between their real value and blank.
         self._dps: dict[str, Any] = {}
+        self._last_seen = 0.0
         self._link = SpaLink(self._build_device, self._push_from_thread, self._state_from_thread)
+
+    @property
+    def link_connected(self) -> bool:
+        return self._link.connected
 
     # --- connection ----------------------------------------------------------------
 
@@ -110,13 +123,21 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def _apply_push(self, dps: dict[str, Any]) -> None:
         self._dps.update(dps)
+        self._last_seen = time.monotonic()
         self.async_set_updated_data(dict(self._dps))
 
     def _state_from_thread(self, connected: bool, detail: str) -> None:
         if connected:
-            _LOGGER.debug("Connected to the spa")
-        else:
-            _LOGGER.debug("Disconnected from the spa: %s", detail)
+            _LOGGER.info("Reconnected to the spa")
+            return
+        _LOGGER.info("Lost the connection to the spa: %s", detail)
+        # Do not wait for the next scheduled poll to notice; a lost connection should
+        # show up as unavailable entities promptly.
+        self.hass.loop.call_soon_threadsafe(self._note_disconnect)
+
+    @callback
+    def _note_disconnect(self) -> None:
+        self.hass.async_create_task(self.async_request_refresh())
 
     async def _async_run(self, func) -> Any:
         """Run something on the socket thread and wait for it."""
@@ -164,7 +185,7 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return False
         self._last_host_lookup = now
 
-        host = await find_host(self.entry.data[CONF_DEVICE_ID])
+        host = await find_host(self.hass, self.entry.data[CONF_DEVICE_ID])
         if not host or host == self.entry.data[CONF_HOST]:
             return False
 
@@ -200,12 +221,20 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 dps = status.get("dps")
                 if isinstance(dps, dict) and dps:
                     self._dps.update(dps)
+                    self._last_seen = time.monotonic()
                     return dict(self._dps)
-                # An empty reply is normal once nothing has changed, as long as a full
-                # picture was seen at least once.
-                if self._dps and not status.get("Err"):
+                # An empty reply is normal on a push connection once nothing has changed,
+                # but only while the link is up and the picture is recent. Otherwise a
+                # half-open socket would keep serving values from before the spa vanished.
+                fresh = time.monotonic() - self._last_seen < STALE_AFTER
+                if self._dps and fresh and self._link.connected and not status.get("Err"):
                     return dict(self._dps)
-                last = str(status.get("Error") or status.get("Err") or "no data points")
+                if not self._link.connected:
+                    last = "the connection to the spa is down"
+                elif not fresh:
+                    last = f"nothing heard for over {STALE_AFTER:.0f}s"
+                else:
+                    last = str(status.get("Error") or status.get("Err") or "no data points")
 
             _LOGGER.debug("Spa gave nothing back (attempt %d): %s", attempt, last)
             if attempt == 2 or not await self._async_repair(str(status.get("Err", ""))):
@@ -236,6 +265,11 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 result = await self._async_run(
                     lambda device: device.set_value(dp, value, nowait=False) or {}
                 )
+            except ConfigEntryAuthFailed as err:
+                # Raised from a service call this would only be an error toast: only the
+                # coordinator's own refresh path turns it into a reauth prompt.
+                self.entry.async_start_reauth(self.hass)
+                raise HomeAssistantError(str(err)) from err
             except Exception as err:  # noqa: BLE001
                 last = str(err)
             else:

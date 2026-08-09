@@ -26,6 +26,8 @@ _LOGGER = logging.getLogger(__name__)
 SOCKET_TIMEOUT = 1.0
 HEARTBEAT_INTERVAL = 10.0
 RECONNECT_DELAY = 5.0
+# tinytuya connects while the device object is built, using its own timeout.
+JOIN_TIMEOUT = 15.0
 
 
 class _Job:
@@ -67,7 +69,12 @@ class SpaLink:
         self._stop.set()
         thread, self._thread = self._thread, None
         if thread is not None:
-            thread.join(timeout=SOCKET_TIMEOUT * 3)
+            # Long enough to outlast a connect attempt in progress. Abandoning the thread
+            # early would leave it holding the spa's one permitted connection while a
+            # replacement opens another.
+            thread.join(timeout=JOIN_TIMEOUT)
+            if thread.is_alive():
+                _LOGGER.warning("The spa connection thread did not stop in time")
         # Anything still queued will never run; fail it rather than leave awaiters hanging.
         while True:
             try:
@@ -76,6 +83,10 @@ class SpaLink:
                 break
             if not job.future.done():
                 job.future.set_exception(ConnectionError("the connection was shut down"))
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
 
     def rebuild(self) -> None:
         """Ask the thread to drop the socket and reconnect, after a key or address change."""
@@ -86,6 +97,11 @@ class SpaLink:
     def submit(self, func: Callable[[Any], Any]) -> concurrent.futures.Future:
         """Run `func(device)` on the socket thread and return a Future for its result."""
         job = _Job(func)
+        if self._stop.is_set():
+            # Nothing will ever run it; say so now rather than let the caller wait out
+            # its whole timeout.
+            job.future.set_exception(ConnectionError("the connection is shut down"))
+            return job.future
         self._queue.put(job)
         return job.future
 
@@ -103,13 +119,19 @@ class SpaLink:
                 job = self._queue.get_nowait()
             except queue.Empty:
                 return
-            if job.future.cancelled():
+            # Claim the job atomically; a caller that timed out may have cancelled it
+            # between the queue pop and here, and settling a cancelled Future raises.
+            if not job.future.set_running_or_notify_cancel():
                 continue
             try:
                 job.future.set_result(job.func(device))
+                self._set_connected(True)
             except Exception as err:  # noqa: BLE001 - reported through the Future
+                # Report it and carry on. A command can fail for reasons that say
+                # nothing about the transport, and dropping the connection over one
+                # would cost seconds of downtime; if the socket really is dead, the
+                # next receive() will say so.
                 job.future.set_exception(err)
-                raise
 
     def _close(self, device: Any) -> None:
         try:

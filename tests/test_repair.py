@@ -123,8 +123,10 @@ class FakeLink:
     def __init__(self, build_device, on_push, on_state):
         self._build = build_device
         self.on_push = on_push
+        self.on_state = on_state
         self.device = None
         self.rebuilds = 0
+        self.connected = True
 
     def start(self):
         pass
@@ -221,7 +223,7 @@ async def main():
     # 3. moved device is rediscovered
     FakeCloud.logins = 0
     coord, entry = build(key="NEWKEY", host="192.168.1.99")
-    mod.find_host = lambda device_id, timeout=12.0: _async_return("192.168.1.133")
+    mod.find_host = lambda hass, device_id, timeout=20.0: _async_return("192.168.1.133")
     data = await coord._async_update_data()
     check("a moved device is rediscovered", entry.data["host"] == "192.168.1.133", str(data))
 

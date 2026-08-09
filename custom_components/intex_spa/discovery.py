@@ -13,14 +13,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import logging
 import socket
 import struct
 from typing import Any
 
+import tinytuya
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,6 +31,11 @@ _LOGGER = logging.getLogger(__name__)
 UDP_KEY = hashlib.md5(b"yGAdlopoPVldABfn").digest()
 
 PORTS = (6666, 6667, 7000)
+
+# A beacon is unauthenticated: the encrypted dialects use a key published in every Tuya
+# device, and anything on the LAN can send one. Nothing here may be trusted beyond
+# "somebody at this address claims to be this device id".
+MAX_BEACONS = 512
 PREFIX_55AA = 0x000055AA
 PREFIX_6699 = 0x00006699
 
@@ -75,26 +83,44 @@ def _strip_frame(data: bytes) -> bytes | None:
 
 
 class _Beacons(asyncio.DatagramProtocol):
-    def __init__(self, found: dict[str, str]) -> None:
+    """Collects beacons defensively; every field in one is attacker-controlled."""
+
+    def __init__(self, found: dict[str, str], wanted: str | None = None) -> None:
         self._found = found
+        self._wanted = wanted
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         payload = _strip_frame(data)
         if not payload:
             return
         try:
-            info: dict[str, Any] = json.loads(payload.decode("utf8", "ignore"))
+            info = json.loads(payload.decode("utf8", "ignore"))
         except ValueError:
             return
+        if not isinstance(info, dict):
+            return
+
         device_id = info.get("gwId") or info.get("devId")
-        if device_id:
-            self._found[device_id] = info.get("ip") or addr[0]
+        # Must be a string: it becomes a dict key, and a list or a number would raise.
+        if not isinstance(device_id, str) or not device_id:
+            return
+        # When looking for one device, ignore the rest so a flood of forged ids for
+        # other devices cannot crowd it out or fill memory.
+        if self._wanted is not None and device_id != self._wanted:
+            return
+        if device_id not in self._found and len(self._found) >= MAX_BEACONS:
+            return
+
+        # Deliberately the sender's address, not the "ip" the packet claims. Trusting the
+        # body would let anything on the network name any target - including a hostname,
+        # which would be resolved and reached off the LAN entirely.
+        self._found[device_id] = addr[0]
 
     def error_received(self, exc: Exception) -> None:
         _LOGGER.debug("Tuya discovery socket error: %s", exc)
 
 
-async def discover(timeout: float = 20.0) -> dict[str, str]:
+async def discover(timeout: float = 20.0, wanted: str | None = None) -> dict[str, str]:
     """Listen on every beacon port and return {device_id: ip}.
 
     Ports already taken by another listener on the host are skipped rather than
@@ -108,11 +134,10 @@ async def discover(timeout: float = 20.0) -> dict[str, str]:
 
     for port in PORTS:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # SO_REUSEADDR only. With SO_REUSEPORT the kernel load-balances arriving
+        # datagrams between everyone bound to the port, so half the beacons would be
+        # taken from any other Tuya integration on this host instead of shared with it.
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        except (AttributeError, OSError):
-            pass
         try:
             sock.bind(("", port))
         except OSError as err:
@@ -121,7 +146,8 @@ async def discover(timeout: float = 20.0) -> dict[str, str]:
             blocked.append(port)
             sock.close()
             continue
-        transport, _ = await loop.create_datagram_endpoint(lambda: _Beacons(found), sock=sock)
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: _Beacons(found, wanted), sock=sock)
         transports.append(transport)
         opened.append(port)
 
@@ -144,7 +170,7 @@ async def discover(timeout: float = 20.0) -> dict[str, str]:
             transport.close()
 
     if found:
-        _LOGGER.debug("Tuya discovery saw %d device(s): %s", len(found), ", ".join(found))
+        _LOGGER.debug("Tuya discovery saw %d device(s)", len(found))
     else:
         _LOGGER.warning(
             "Tuya discovery heard nothing in %.0fs on port(s) %s. Either the spa is on a "
@@ -154,6 +180,43 @@ async def discover(timeout: float = 20.0) -> dict[str, str]:
     return found
 
 
-async def find_host(device_id: str, timeout: float = 20.0) -> str | None:
-    """Return the LAN address of one device, or None if it stayed quiet."""
-    return (await discover(timeout)).get(device_id)
+async def find_host(hass: HomeAssistant, device_id: str, timeout: float = 20.0) -> str | None:
+    """Return the LAN address of one device, or None if it could not be found.
+
+    Asks before listening. Devices on protocol 3.4 and 3.5 - which is what these spas
+    are - stay silent until they receive a discovery request, so passive listening alone
+    finds nothing. The passive sweep is kept as a fallback for older firmware that does
+    announce itself unprompted.
+    """
+    try:
+        answer = await hass.async_add_executor_job(_probe, device_id)
+    except Exception as err:  # noqa: BLE001 - a failed probe is not fatal
+        _LOGGER.debug("Active discovery probe failed: %s", err)
+    else:
+        if answer:
+            _LOGGER.debug("Active discovery found %s at %s", device_id, answer)
+            return answer
+
+    _LOGGER.debug("No answer to the discovery request; listening for beacons instead")
+    return (await discover(timeout, wanted=device_id)).get(device_id)
+
+
+def _probe(device_id: str) -> str | None:
+    """Broadcast a discovery request and return the address that answers."""
+    found = tinytuya.find_device(dev_id=device_id)
+    if isinstance(found, dict):
+        # tinytuya reports a miss as {"ip": None, ...} rather than an empty result.
+        return _as_address(found.get("ip"))
+    return None
+
+
+def _as_address(value: Any) -> str | None:
+    """Accept only a literal IP address. A hostname here would be resolved and reached."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        _LOGGER.debug("Ignoring a discovery answer that is not an IP address: %r", value)
+        return None
+    return value

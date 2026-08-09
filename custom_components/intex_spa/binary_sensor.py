@@ -14,6 +14,9 @@ from . import IntexSpaConfigEntry
 from .const import DP_HEAT_STATE, HEAT_STATE_ACTIVE
 from .entity import IntexSpaEntity
 
+# The socket thread already serialises the wire; this bounds how much can pile up.
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: IntexSpaConfigEntry, async_add_entities: AddEntitiesCallback
