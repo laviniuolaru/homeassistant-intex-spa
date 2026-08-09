@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Intex Spa",
+        "description": "Sign in with the same account you use in the Intex Link app. The device id, encryption key and network address are looked up for you.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "country_code": "Country dialling code"
+        },
+        "data_description": {
+          "country_code": "The dialling code of the country the account was registered in, without the plus sign. Romania is 40, Germany 49, the United Kingdom 44.",
+          "password": "Stored so the encryption key can be renewed automatically if you ever re-pair the spa."
+        }
+      },
+      "device": {
+        "title": "Choose a spa",
+        "description": "The account holds more than one device."
+      },
+      "host": {
+        "title": "Network address",
+        "description": "{name} did not announce itself on the network, so its address could not be found automatically. Enter it manually, and reserve it in your router so it does not change.",
+        "data": { "host": "IP address" }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "The password stored for {email} is no longer accepted.",
+        "data": { "password": "Password" }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the Intex service. Check the internet connection and try again.",
+      "invalid_auth": "Wrong email, password or country code.",
+      "no_devices": "The account has no devices on it.",
+      "unknown": "Unexpected error. See the log for details."
+    },
+    "abort": {
+      "already_configured": "This spa has already been added.",
+      "reauth_successful": "Signed in again successfully."
+    }
+  },
+  "entity": {
+    "switch": {
+      "power": { "name": "Power" },
+      "filtration": { "name": "Filtration" },
+      "bubbles": { "name": "Bubbles" },
+      "jets": { "name": "Jets" },
+      "sanitizer": { "name": "Sanitizer" }
+    },
+    "sensor": {
+      "water_temperature": { "name": "Water temperature" },
+      "time_remaining": { "name": "Time remaining" }
+    },
+    "binary_sensor": {
+      "heating": { "name": "Heating" }
+    }
+  }
+}

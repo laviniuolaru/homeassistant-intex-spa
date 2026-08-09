@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Intex Spa",
+        "description": "Autentifică-te cu același cont pe care îl folosești în aplicația Intex Link. Id-ul dispozitivului, cheia de criptare și adresa din rețea se găsesc automat.",
+        "data": {
+          "email": "Email",
+          "password": "Parolă",
+          "country_code": "Prefixul telefonic al țării"
+        },
+        "data_description": {
+          "country_code": "Prefixul țării în care a fost înregistrat contul, fără plus. România este 40, Germania 49, Marea Britanie 44.",
+          "password": "Se păstrează pentru ca reînnoirea cheii de criptare să se facă singură dacă reasociezi spa-ul."
+        }
+      },
+      "device": {
+        "title": "Alege spa-ul",
+        "description": "Contul are mai multe dispozitive."
+      },
+      "host": {
+        "title": "Adresa din rețea",
+        "description": "{name} nu s-a anunțat în rețea, deci adresa nu a putut fi găsită automat. Introdu-o manual și rezerv-o în router ca să nu se schimbe.",
+        "data": { "host": "Adresă IP" }
+      },
+      "reauth_confirm": {
+        "title": "Autentificare din nou",
+        "description": "Parola salvată pentru {email} nu mai este acceptată.",
+        "data": { "password": "Parolă" }
+      }
+    },
+    "error": {
+      "cannot_connect": "Serviciul Intex nu poate fi contactat. Verifică internetul și încearcă din nou.",
+      "invalid_auth": "Email, parolă sau prefix de țară greșit.",
+      "no_devices": "Contul nu are niciun dispozitiv.",
+      "unknown": "Eroare neașteptată. Vezi logul pentru detalii."
+    },
+    "abort": {
+      "already_configured": "Spa-ul este deja adăugat.",
+      "reauth_successful": "Autentificare reușită."
+    }
+  },
+  "entity": {
+    "switch": {
+      "power": { "name": "Pornire" },
+      "filtration": { "name": "Filtrare" },
+      "bubbles": { "name": "Bule" },
+      "jets": { "name": "Jeturi" },
+      "sanitizer": { "name": "Sterilizare" }
+    },
+    "sensor": {
+      "water_temperature": { "name": "Temperatura apei" },
+      "time_remaining": { "name": "Timp rămas" }
+    },
+    "binary_sensor": {
+      "heating": { "name": "Încălzire" }
+    }
+  }
+}
