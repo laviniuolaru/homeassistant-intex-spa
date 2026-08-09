@@ -45,7 +45,7 @@ class DataUpdateCoordinator:
     def __class_getitem__(cls, item):   # the real one is generic
         return cls
 
-    def __init__(self, hass, logger, name=None, update_interval=None):
+    def __init__(self, hass, logger, name=None, update_interval=None, always_update=True):
         self.hass = hass
         self.data = None
         self.refreshes = 0
