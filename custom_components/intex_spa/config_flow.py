@@ -12,8 +12,14 @@ from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     SelectSelector,
@@ -43,6 +49,7 @@ from .const import (
     KNOWN_PRODUCTS,
 )
 from .discovery import as_address, find_host
+from .probe import PROTOCOL_VERSIONS, probe_protocol
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +64,11 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle setting up an Intex spa."""
 
     VERSION = 2
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(entry: ConfigEntry) -> IntexSpaOptionsFlow:
+        return IntexSpaOptionsFlow()
 
     def __init__(self) -> None:
         self._devices: list[dict[str, Any]] = []
@@ -132,7 +144,7 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
             # protection that stops a forged beacon naming an off-network target.
             host = as_address(user_input[CONF_HOST])
             if host:
-                return self._create(self._chosen, host)
+                return await self._create(self._chosen, host)
             errors["base"] = "invalid_host"
 
         return self.async_show_form(
@@ -161,16 +173,29 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
         host = await find_host(self.hass, device["device_id"])
         if not host:
             return await self.async_step_host()
-        return self._create(device, host)
+        return await self._create(device, host)
 
-    def _create(self, device: dict[str, Any], host: str) -> ConfigFlowResult:
+    async def _create(self, device: dict[str, Any], host: str) -> ConfigFlowResult:
+        # Ask the spa which protocol it speaks rather than assuming. Assuming is what
+        # leaves someone with an older module in an unbreakable loop: the wrong version
+        # looks exactly like a rotated key, and re-adding writes the same wrong guess.
+        answer = await self.hass.async_add_executor_job(
+            probe_protocol, device["device_id"], host, device["local_key"]
+        )
+        protocol = answer[0] if answer else DEFAULT_PROTOCOL
+        if not answer:
+            _LOGGER.warning(
+                "No protocol version answered at %s; storing %s. If the spa stays "
+                "unavailable, change it in the integration options", host, protocol,
+            )
+
         return self.async_create_entry(
             title=device["name"],
             data={
                 CONF_DEVICE_ID: device["device_id"],
                 CONF_LOCAL_KEY: device["local_key"],
                 CONF_HOST: host,
-                CONF_PROTOCOL: DEFAULT_PROTOCOL,
+                CONF_PROTOCOL: protocol,
                 "product_id": device["product_id"],
             },
         )
@@ -217,4 +242,54 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=CREDENTIALS_SCHEMA,
             errors=errors,
             description_placeholders={"name": entry.title},
+        )
+
+
+class IntexSpaOptionsFlow(OptionsFlow):
+    """Lets the address and protocol version be corrected after setup.
+
+    Without this, a spa the probe could not reach - or one that later moves somewhere
+    discovery cannot see - can only be fixed by deleting the entry and losing its
+    history. The local key is here too because re-pairing rotates it and someone may
+    already have the new one to hand.
+    """
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        entry = self.config_entry
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            host = as_address(user_input[CONF_HOST])
+            if not host:
+                errors["base"] = "invalid_host"
+            else:
+                self.hass.config_entries.async_update_entry(
+                    entry,
+                    data={
+                        **entry.data,
+                        CONF_HOST: host,
+                        CONF_PROTOCOL: user_input[CONF_PROTOCOL],
+                        CONF_LOCAL_KEY: user_input[CONF_LOCAL_KEY].strip()
+                        or entry.data[CONF_LOCAL_KEY],
+                    },
+                )
+                await self.hass.config_entries.async_reload(entry.entry_id)
+                return self.async_create_entry(data={})
+
+        return self.async_show_form(
+            step_id="init",
+            errors=errors,
+            data_schema=vol.Schema({
+                vol.Required(CONF_HOST, default=entry.data[CONF_HOST]): str,
+                vol.Required(
+                    CONF_PROTOCOL, default=entry.data.get(CONF_PROTOCOL, DEFAULT_PROTOCOL)
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=list(PROTOCOL_VERSIONS), mode=SelectSelectorMode.DROPDOWN
+                    )
+                ),
+                vol.Optional(CONF_LOCAL_KEY, default=""): str,
+            }),
         )

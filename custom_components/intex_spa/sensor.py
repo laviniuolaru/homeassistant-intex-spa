@@ -7,13 +7,13 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTemperature, UnitOfTime
+from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import IntexSpaConfigEntry
 from .const import DP_HEAT_STATE, DP_TEMP_CURRENT, DP_TIMER, HEAT_STATES
-from .entity import IntexSpaEntity
+from .entity import IntexSpaEntity, add_as_they_appear
 
 # Read-only: zero means Home Assistant applies no limit, which is right here.
 PARALLEL_UPDATES = 0
@@ -23,15 +23,21 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: IntexSpaConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator = entry.runtime_data
-    reported = coordinator.data or {}
-    entities: list[SensorEntity] = []
-    if DP_TEMP_CURRENT in reported:
-        entities.append(IntexSpaTemperature(coordinator))
-    if DP_TIMER in reported:
-        entities.append(IntexSpaTimeRemaining(coordinator))
-    if DP_HEAT_STATE in reported:
-        entities.append(IntexSpaHeatState(coordinator))
-    async_add_entities(entities)
+    made = {
+        DP_TEMP_CURRENT: IntexSpaTemperature,
+        DP_TIMER: IntexSpaTimeRemaining,
+        DP_HEAT_STATE: IntexSpaHeatState,
+    }
+
+    def build(dps, seen):
+        new = []
+        for dp, factory in made.items():
+            if dp in dps and dp not in seen:
+                seen.add(dp)
+                new.append(factory(coordinator))
+        return new
+
+    add_as_they_appear(coordinator, async_add_entities, build)
 
 
 class IntexSpaTemperature(IntexSpaEntity, SensorEntity):
@@ -40,11 +46,14 @@ class IntexSpaTemperature(IntexSpaEntity, SensorEntity):
     _attr_translation_key = "water_temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
     _attr_suggested_display_precision = 1
 
     def __init__(self, coordinator) -> None:
         super().__init__(coordinator, "water_temperature")
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        return self.coordinator.temperature_unit
 
     @property
     def native_value(self) -> float | None:

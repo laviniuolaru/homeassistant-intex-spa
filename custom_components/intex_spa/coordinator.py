@@ -20,6 +20,7 @@ from typing import Any
 
 import tinytuya
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfTemperature
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.event import async_call_later
@@ -32,6 +33,12 @@ from .const import (
     CONF_PROTOCOL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    DP_TEMP_SET,
+    MAX_TEMP_C,
+    MAX_TEMP_F,
+    MIN_TEMP_C,
+    MIN_TEMP_F,
+    UNIT_THRESHOLD,
 )
 from .discovery import find_host
 from .link import SpaLink
@@ -48,6 +55,11 @@ HOST_REDISCOVER_COOLDOWN = 300.0
 
 # How long to let the spa settle before re-reading after a write.
 CONFIRM_DELAY = 2.0
+
+# How long an assumed value may stand in for a reported one. The spa acknowledges a
+# command it then declines to carry out - an interlock, or the power being off - and
+# without an expiry the switch would show that lie for ever.
+PENDING_TTL = 8.0
 
 # How long a command may wait for the socket thread before it is treated as stuck.
 COMMAND_TIMEOUT = 15.0
@@ -82,11 +94,47 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Seeded to now: monotonic() is uptime, so a zero would make the very first poll
         # report "nothing heard for two minutes" about a spa reachable for two seconds.
         self._last_seen = time.monotonic()
+        # What has been asked for but not yet confirmed, kept apart from what the spa
+        # actually reported so it can be dropped again.
+        self._pending: dict[str, tuple[Any, float]] = {}
         self._link = SpaLink(self._build_device, self._push_from_thread, self._state_from_thread)
+
+    def _view(self) -> dict[str, Any]:
+        """The reported state, with anything still awaiting confirmation laid over it."""
+        now = time.monotonic()
+        for dp in [dp for dp, (_, until) in self._pending.items() if until <= now]:
+            _LOGGER.debug("The spa never confirmed data point %s; showing what it reports", dp)
+            del self._pending[dp]
+        return {**self._dps, **{dp: value for dp, (value, _) in self._pending.items()}}
+
+    def _settle(self, dps: dict[str, Any]) -> None:
+        """Drop assumptions the spa has now either confirmed or contradicted."""
+        for dp in [dp for dp, (value, _) in self._pending.items()
+                   if dp in dps and dps[dp] == value]:
+            del self._pending[dp]
 
     @property
     def link_connected(self) -> bool:
         return self._link.connected
+
+    @property
+    def temperature_unit(self) -> str:
+        """Whichever unit the spa's own panel is set to.
+
+        Decided from the target temperature, never the current one: the two valid target
+        ranges do not overlap, while a cold spa's current temperature is ambiguous.
+        Falls back to Fahrenheit, which is what every unit seen so far reports.
+        """
+        target = self._dps.get(DP_TEMP_SET)
+        if isinstance(target, (int, float)) and target < UNIT_THRESHOLD:
+            return UnitOfTemperature.CELSIUS
+        return UnitOfTemperature.FAHRENHEIT
+
+    @property
+    def temperature_range(self) -> tuple[int, int]:
+        if self.temperature_unit == UnitOfTemperature.CELSIUS:
+            return MIN_TEMP_C, MAX_TEMP_C
+        return MIN_TEMP_F, MAX_TEMP_F
 
     # --- connection ----------------------------------------------------------------
 
@@ -125,8 +173,9 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def _apply_push(self, dps: dict[str, Any]) -> None:
         self._dps.update(dps)
+        self._settle(dps)
         self._last_seen = time.monotonic()
-        self.async_set_updated_data(dict(self._dps))
+        self.async_set_updated_data(self._view())
 
     def _state_from_thread(self, connected: bool, detail: str) -> None:
         if connected:
@@ -202,14 +251,15 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 dps = status.get("dps")
                 if isinstance(dps, dict) and dps:
                     self._dps.update(dps)
+                    self._settle(dps)
                     self._last_seen = time.monotonic()
-                    return dict(self._dps)
+                    return self._view()
                 # An empty reply is normal on a push connection once nothing has changed,
                 # but only while the link is up and the picture is recent. Otherwise a
                 # half-open socket would keep serving values from before the spa vanished.
                 fresh = time.monotonic() - self._last_seen < STALE_AFTER
                 if self._dps and fresh and self._link.connected and not status.get("Err"):
-                    return dict(self._dps)
+                    return self._view()
                 if not self._link.connected:
                     last = "the connection to the spa is down"
                 elif not fresh:
@@ -255,8 +305,12 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         # reply, so what was asked for is applied last and wins.
                         if isinstance(result.get("dps"), dict):
                             self._dps.update(result["dps"])
-                        self._dps[dp] = value
-                        self.async_set_updated_data(dict(self._dps))
+                        # Held apart from what the spa reported, and given an expiry, so
+                        # a command it acknowledges but then declines to carry out - an
+                        # interlock, or the power being off - stops being shown as done.
+                        self._pending[dp] = (value, time.monotonic() + PENDING_TTL)
+                        self._settle(self._dps)
+                        self.async_set_updated_data(self._view())
                         self._schedule_confirmation()
                         return
                     last = str(result.get("Error") or result.get("Err"))

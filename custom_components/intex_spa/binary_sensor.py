@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import IntexSpaConfigEntry
 from .const import DP_HEAT_STATE, HEAT_STATE_ACTIVE
-from .entity import IntexSpaEntity
+from .entity import IntexSpaEntity, add_as_they_appear
 
 # Read-only: zero means Home Assistant applies no limit, which is right here.
 PARALLEL_UPDATES = 0
@@ -22,8 +22,14 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: IntexSpaConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator = entry.runtime_data
-    if DP_HEAT_STATE in (coordinator.data or {}):
-        async_add_entities([IntexSpaHeating(coordinator)])
+
+    def build(dps, seen):
+        if DP_HEAT_STATE in dps and DP_HEAT_STATE not in seen:
+            seen.add(DP_HEAT_STATE)
+            return [IntexSpaHeating(coordinator)]
+        return []
+
+    add_as_they_appear(coordinator, async_add_entities, build)
 
 
 class IntexSpaHeating(IntexSpaEntity, BinarySensorEntity):

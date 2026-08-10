@@ -99,7 +99,13 @@ KNOWN_PRODUCTS: Final = {"bksofco59ud7eovz", "chsaskllmust5d7a"}
 # Without these there is nothing recognisable to control, whatever the product id says.
 ESSENTIAL_DPS: Final = {DP_POWER, DP_TEMP_CURRENT}
 
-# Expressed in Fahrenheit because that is what the device speaks; Home Assistant
-# converts for display. Matches the range the panel itself allows, 20-40 C.
+# The spa transports whatever unit its panel is set to, so both ranges exist. They do
+# not overlap, which is what makes the unit detectable: a target of 20-40 can only be
+# Celsius and 68-104 can only be Fahrenheit. The current temperature is no use for this
+# - an unheated spa at 5 C reads 41 F, which is inside the Celsius range.
 MIN_TEMP_F: Final = 68
 MAX_TEMP_F: Final = 104
+MIN_TEMP_C: Final = 20
+MAX_TEMP_C: Final = 40
+# Comfortably inside the gap between the two ranges.
+UNIT_THRESHOLD: Final = 50

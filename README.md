@@ -131,9 +131,18 @@ in parallel will knock this integration off for a few seconds. The Intex Link ap
 affected, because it goes through the cloud.
 
 **Only one model is verified.** The data point layout was confirmed on product id
-`bksofco59ud7eovz` ("SPA PRODUCT WITH SALT & JET"). Other models are accepted, and
-entities are created only for data points your spa actually reports - but if yours behaves
-oddly, open an issue with its product id.
+`bksofco59ud7eovz` ("SPA PRODUCT WITH SALT & JET"). Other models are accepted and you are
+told during setup that yours is untested; entities are built from whatever data points
+your spa reports, and appear later if it starts reporting more. If something is missing,
+open an issue with the product id and data point list from that notice.
+
+**Protocol version and address can be corrected.** Setup asks the spa which protocol it
+speaks rather than assuming, but if it cannot be reached at that moment, *Configure* on
+the integration lets you set the address, the protocol version and the local key by hand.
+
+**Both temperature units are handled.** The spa transports whichever unit its own panel is
+set to. Which one is in use is worked out from the target temperature, whose two valid
+ranges - 20-40 and 68-104 - cannot be confused with each other.
 
 ## Not affiliated with Intex or Tuya
 

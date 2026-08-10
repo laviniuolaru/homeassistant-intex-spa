@@ -105,5 +105,21 @@
       "title": "Acesta nu pare a fi un PureSpa",
       "description": "Product id-ul `{product}` a raportat aceste puncte de date: {points}. Cele necesare controlului de bază nu sunt printre ele, deci majoritatea entităților vor lipsi. Deschide un issue cu lista aceasta - e exact ce trebuie ca să fie adăugat suportul."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Conexiune",
+        "description": "Corectează-le dacă spa-ul nu poate fi contactat. Lasă cheia goală ca s-o păstrezi pe cea salvată.",
+        "data": {
+          "host": "Adresă IP",
+          "protocol_version": "Versiune de protocol",
+          "local_key": "Cheie locală (opțional)"
+        }
+      }
+    },
+    "error": {
+      "invalid_host": "Nu este o adresă IP validă."
+    }
   }
 }

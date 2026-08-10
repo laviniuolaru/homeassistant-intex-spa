@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import IntexSpaConfigEntry
 from .const import SWITCH_DPS
-from .entity import IntexSpaEntity
+from .entity import IntexSpaEntity, add_as_they_appear
 
 # The socket thread already serialises the wire; this bounds how much can pile up.
 PARALLEL_UPDATES = 1
@@ -20,12 +20,16 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: IntexSpaConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator = entry.runtime_data
-    reported = coordinator.data or {}
-    async_add_entities(
-        IntexSpaSwitch(coordinator, dp, key, icon)
-        for dp, (key, icon) in SWITCH_DPS.items()
-        if dp in reported
-    )
+
+    def build(dps, seen):
+        new = []
+        for dp, (key, icon) in SWITCH_DPS.items():
+            if dp in dps and dp not in seen:
+                seen.add(dp)
+                new.append(IntexSpaSwitch(coordinator, dp, key, icon))
+        return new
+
+    add_as_they_appear(coordinator, async_add_entities, build)
 
 
 class IntexSpaSwitch(IntexSpaEntity, SwitchEntity):

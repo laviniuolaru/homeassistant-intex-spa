@@ -255,6 +255,18 @@ async def main():
     await coord._async_update_data()
     await coord.async_set_dp("107", True)
     check("a write is reflected at once", coord.data.get("107") is True, str(coord.data))
+    # ...but only for a while. A command the spa acknowledges and then declines to carry
+    # out - which is exactly what the filtration interlock does - must stop being shown.
+    mod.PENDING_TTL = -1.0
+    coord._pending["109"] = (99, __import__("time").monotonic() - 1)
+    stale = coord._view()
+    check("an unconfirmed write stops being shown", "109" not in stale, str(stale))
+    mod.PENDING_TTL = 8.0
+
+    # and a confirmed one is dropped from the overlay rather than lingering
+    coord._pending["104"] = (True, __import__("time").monotonic() + 60)
+    coord._settle({"104": True})
+    check("a confirmed write leaves the overlay", "104" not in coord._pending)
     coord._apply_push({"105": True})
     check("a pushed update merges into the state", coord.data.get("105") is True, str(coord.data))
     check("a push keeps the points it did not mention", coord.data.get("110") == 90)

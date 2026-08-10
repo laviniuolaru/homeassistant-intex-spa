@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -35,3 +36,24 @@ class IntexSpaEntity(CoordinatorEntity[IntexSpaCoordinator]):
     @property
     def available(self) -> bool:
         return super().available and bool(self.coordinator.data)
+
+
+@callback
+def add_as_they_appear(coordinator, async_add_entities, build) -> None:
+    """Create entities when their data point first shows up, not only at setup.
+
+    The spa answers with the points that changed, so the first reply after a restart can
+    easily be partial - and a point it only reports while the function is engaged may
+    not appear for hours. Deciding the entity list once from that first reply leaves
+    switches permanently missing, with a reload as the only cure.
+    """
+    seen: set[str] = set()
+
+    @callback
+    def _sync() -> None:
+        new = build(coordinator.data or {}, seen)
+        if new:
+            async_add_entities(new)
+
+    _sync()
+    coordinator.async_add_listener(_sync)

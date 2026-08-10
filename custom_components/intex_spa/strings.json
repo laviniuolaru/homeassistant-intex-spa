@@ -105,5 +105,21 @@
       "title": "This spa does not look like a PureSpa",
       "description": "Product id `{product}` reported these data points: {points}. The ones needed for basic control are not among them, so most entities will be missing. Please open an issue with that list - it is exactly what is needed to add support."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Connection",
+        "description": "Correct these if the spa cannot be reached. Leave the key blank to keep the one already stored.",
+        "data": {
+          "host": "IP address",
+          "protocol_version": "Protocol version",
+          "local_key": "Local key (optional)"
+        }
+      }
+    },
+    "error": {
+      "invalid_host": "That is not a valid IP address."
+    }
   }
 }
