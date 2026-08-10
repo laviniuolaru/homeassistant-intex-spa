@@ -38,7 +38,7 @@
     "error": {
       "cannot_connect": "Serviciul Intex nu poate fi contactat. Verifică internetul și încearcă din nou.",
       "invalid_auth": "Email, parolă sau prefix de țară greșit.",
-      "no_devices": "Contul nu are niciun dispozitiv.",
+      "no_devices": "Niciun dispozitiv pe contul acela. Dacă codul de pe panoul spa-ului nu conține TY, atunci nu are modul Tuya și integrarea nu poate comunica cu el.",
       "unknown": "Eroare neașteptată. Vezi logul pentru detalii.",
       "wrong_account": "Datele sunt corecte, dar contul acela nu deține acest spa.",
       "invalid_host": "Nu este o adresă IP validă."
@@ -91,6 +91,16 @@
   "exceptions": {
     "temperature_out_of_range": {
       "message": "Spa-ul acceptă o țintă doar între {min} și {max} grade Fahrenheit."
+    }
+  },
+  "issues": {
+    "unverified_model": {
+      "title": "Modelul acesta de spa nu a fost verificat",
+      "description": "Spa-ul tău raportează product id-ul `{product}`, cu care integrarea nu a fost testată. Ar trebui să meargă oricum - entitățile au fost create din punctele de date pe care le raportează: {points}. Dacă lipsește ceva sau se poartă ciudat, deschide un issue menționând acel product id."
+    },
+    "unsupported_layout": {
+      "title": "Acesta nu pare a fi un PureSpa",
+      "description": "Product id-ul `{product}` a raportat aceste puncte de date: {points}. Cele necesare controlului de bază nu sunt printre ele, deci majoritatea entităților vor lipsi. Deschide un issue cu lista aceasta - e exact ce trebuie ca să fie adăugat suportul."
     }
   }
 }

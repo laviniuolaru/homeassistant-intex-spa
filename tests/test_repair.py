@@ -121,6 +121,11 @@ _mod("homeassistant.exceptions", ConfigEntryAuthFailed=ConfigEntryAuthFailed,
 _mod("homeassistant.helpers")
 _mod("homeassistant.helpers.aiohttp_client", async_get_clientsession=lambda hass: None)
 _mod("homeassistant.helpers.event", async_call_later=lambda hass, delay, cb: (lambda: None))
+_ir = _mod("homeassistant.helpers.issue_registry",
+           async_create_issue=lambda *a, **k: None,
+           async_delete_issue=lambda *a, **k: None,
+           IssueSeverity=_Enum())
+sys.modules["homeassistant.helpers"].issue_registry = _ir
 _mod("homeassistant.helpers.update_coordinator",
      DataUpdateCoordinator=DataUpdateCoordinator, UpdateFailed=UpdateFailed)
 

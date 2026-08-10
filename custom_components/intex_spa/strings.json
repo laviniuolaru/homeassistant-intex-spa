@@ -38,7 +38,7 @@
     "error": {
       "cannot_connect": "Could not reach the Intex service. Check the internet connection and try again.",
       "invalid_auth": "Wrong email, password or country code.",
-      "no_devices": "The account has no devices on it.",
+      "no_devices": "No devices on that account. If your spa's control panel code does not contain TY, it does not have a Tuya module and this integration cannot talk to it.",
       "unknown": "Unexpected error. See the log for details.",
       "wrong_account": "Those credentials work, but that account does not own this spa.",
       "invalid_host": "That is not a valid IP address."
@@ -91,6 +91,16 @@
   "exceptions": {
     "temperature_out_of_range": {
       "message": "The spa only accepts a target between {min} and {max} degrees Fahrenheit."
+    }
+  },
+  "issues": {
+    "unverified_model": {
+      "title": "This spa model has not been verified",
+      "description": "Your spa reports product id `{product}`, which this integration has not been tested against. It should still work - entities were created from the data points it reports: {points}. If something is missing or behaves oddly, please open an issue quoting that product id."
+    },
+    "unsupported_layout": {
+      "title": "This spa does not look like a PureSpa",
+      "description": "Product id `{product}` reported these data points: {points}. The ones needed for basic control are not among them, so most entities will be missing. Please open an issue with that list - it is exactly what is needed to add support."
     }
   }
 }

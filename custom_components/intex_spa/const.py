@@ -85,9 +85,14 @@ SWITCH_DPS: Final = {
     DP_SANITIZER: ("sanitizer", "mdi:shimmer"),
 }
 
-# Product ids known to use the data point layout above. Unknown products are still
-# accepted, but only the data points the device actually reports become entities.
-KNOWN_PRODUCTS: Final = {"bksofco59ud7eovz"}
+# Product ids known to use the data point layout above. The second is listed by
+# make-all/tuya-local for the same profile; only the first has been verified here.
+# An unknown product is still accepted - entities are created from whatever data points
+# the spa actually reports - but the owner is told, so a report can be filed.
+KNOWN_PRODUCTS: Final = {"bksofco59ud7eovz", "chsaskllmust5d7a"}
+
+# Without these there is nothing recognisable to control, whatever the product id says.
+ESSENTIAL_DPS: Final = {DP_POWER, DP_TEMP_CURRENT}
 
 # Expressed in Fahrenheit because that is what the device speaks; Home Assistant
 # converts for display. Matches the range the panel itself allows, 20-40 C.

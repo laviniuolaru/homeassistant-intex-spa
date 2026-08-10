@@ -11,7 +11,7 @@
   "requirements": [
     "tinytuya==1.20.0"
   ],
-  "version": "0.4.0",
+  "version": "0.5.0",
   "integration_type": "device",
   "loggers": [
     "tinytuya"

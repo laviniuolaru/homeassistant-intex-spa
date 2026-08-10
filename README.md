@@ -9,12 +9,27 @@ found for you. After that everything is local, and **nothing from that sign-in i
 
 > An independent project, [not affiliated with Intex or Tuya](#not-affiliated-with-intex-or-tuya).
 
-## Why this exists
+## Is this the right integration for your spa?
 
-Intex spas ship with two different WiFi modules and the difference is not advertised.
-If the code on your control panel contains **TY**, the module is made by Tuya, and
-integrations written for the original Intex protocol cannot talk to it at all - they
-speak a proprietary protocol on TCP port 8990, while a Tuya module only answers on 6668.
+**Look at the code printed on the control panel. If it contains `TY`, this is the one.**
+
+Intex ships two different WiFi modules and does not advertise the difference. `TY` means
+a **Tuya** module. If yours does not have it, use
+[mathieu-mp/homeassistant-intex-spa](https://github.com/mathieu-mp/homeassistant-intex-spa)
+instead - and nothing here will work for you, because the two speak entirely different
+protocols on different ports: the original Intex one on TCP 8990, Tuya on 6668.
+
+Two further checks that do not need the panel. A Tuya module answers on port 6668 and
+nothing on 8990. And if your spa appears at all when you sign in during setup, it is a
+Tuya module - the Intex Link account *is* a Tuya account under a different name, so a
+non-Tuya spa is simply not in it.
+
+Setup will also tell you if your particular model is one this has been tested against.
+An untested model is not refused - entities are built from whatever the spa reports - but
+you get a notice naming the product id and the data points it sent, which is exactly what
+is needed to add proper support.
+
+## Why this exists
 
 The usual workaround is a generic Tuya integration, but those need a `local_key` that you
 are expected to obtain through the Tuya IoT developer platform. **That platform does not
