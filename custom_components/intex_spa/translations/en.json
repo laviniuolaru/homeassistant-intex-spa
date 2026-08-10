@@ -64,6 +64,9 @@
       },
       "sanitizer": {
         "name": "Sanitizer"
+      },
+      "heater": {
+        "name": "Heater"
       }
     },
     "sensor": {

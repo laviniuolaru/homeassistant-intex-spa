@@ -77,8 +77,13 @@ HEAT_STATE_ACTIVE: Final = "heat"
 # The full vocabulary, in the order it makes sense to a reader: idle, working, arrived.
 HEAT_STATES: Final = ["off", "heat", "warm"]
 
+# The heater appears here as well as being the water heater's operation mode. They are
+# the same data point and cannot disagree, and it earns its place: the spa's own panel
+# has a heat button, the device page offers no other way to press it, and every other
+# function on this spa is a switch.
 SWITCH_DPS: Final = {
     DP_POWER: ("power", "mdi:power"),
+    DP_HEATER: ("heater", "mdi:radiator"),
     DP_FILTER: ("filtration", "mdi:air-filter"),
     DP_BUBBLES: ("bubbles", "mdi:chart-bubble"),
     DP_JETS: ("jets", "mdi:jets"),
