@@ -4,6 +4,8 @@ Control an Intex PureSpa with a **Tuya** WiFi module from Home Assistant. You si
 once with your Intex Link account; the device id, encryption key and network address are
 found automatically. After setup all control is local, on your own network.
 
+> An independent project, [not affiliated with Intex or Tuya](#not-affiliated-with-intex-or-tuya).
+
 ## Why this exists
 
 Intex spas ship with two different WiFi modules and the difference is not advertised.

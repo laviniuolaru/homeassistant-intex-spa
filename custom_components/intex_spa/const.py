@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Final
 
 DOMAIN: Final = "intex_spa"
@@ -37,10 +39,19 @@ TTID: Final = "sdk_international@" + APP_KEY
 BASE_URL: Final = "https://a1.tuyaeu.com"
 
 # Sent as the HTTP User-Agent so the operator can tell this apart from the real app,
-# and reach the project if the traffic ever bothers them.
+# and reach the project if the traffic ever bothers them. The version is read from the
+# manifest rather than repeated here, because a second copy only ever goes stale.
+def _version() -> str:
+    try:
+        with open(Path(__file__).parent / "manifest.json", encoding="utf8") as handle:
+            return str(json.load(handle).get("version", "unknown"))
+    except (OSError, ValueError):
+        return "unknown"
+
+
 USER_AGENT: Final = (
-    "homeassistant-intex-spa/%s (+https://github.com/laviniuolaru/homeassistant-intex-spa)"
-    % "0.3.3"
+    f"homeassistant-intex-spa/{_version()} "
+    "(+https://github.com/laviniuolaru/homeassistant-intex-spa)"
 )
 APP_VERSION: Final = "1.1.11"
 
