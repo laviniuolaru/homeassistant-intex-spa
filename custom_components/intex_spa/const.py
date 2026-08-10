@@ -8,10 +8,10 @@ from typing import Final
 
 DOMAIN: Final = "intex_spa"
 
+# Asked for at sign-in, never stored: nothing account-related is kept.
 CONF_COUNTRY: Final = "country_code"
 CONF_DEVICE_ID: Final = "device_id"
 CONF_LOCAL_KEY: Final = "local_key"
-CONF_PASSWORD_MD5: Final = "password_md5"
 CONF_HOST: Final = "host"
 CONF_PROTOCOL: Final = "protocol_version"
 

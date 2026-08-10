@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.const import CONF_EMAIL
 from homeassistant.core import HomeAssistant
 
 from . import IntexSpaConfigEntry
-from .const import CONF_DEVICE_ID, CONF_LOCAL_KEY, CONF_PASSWORD_MD5
+from .const import CONF_DEVICE_ID, CONF_LOCAL_KEY
 
-REDACT = {CONF_LOCAL_KEY, CONF_PASSWORD_MD5, CONF_EMAIL, CONF_DEVICE_ID, "client_id"}
+# Nothing about the Intex account is stored, so this is the whole of it.
+REDACT = {CONF_LOCAL_KEY, CONF_DEVICE_ID}
 
 
 async def async_get_config_entry_diagnostics(

@@ -8,6 +8,7 @@ and only if it stays silent is the user asked to type one.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -35,7 +36,6 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_HOST,
     CONF_LOCAL_KEY,
-    CONF_PASSWORD_MD5,
     CONF_PROTOCOL,
     DEFAULT_COUNTRY,
     DEFAULT_PROTOCOL,
@@ -59,7 +59,6 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     def __init__(self) -> None:
-        self._credentials: dict[str, str] = {}
         self._devices: list[dict[str, Any]] = []
         self._chosen: dict[str, Any] = {}
 
@@ -69,8 +68,7 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            client_id = new_client_id()
-            cloud = IntexCloud(async_get_clientsession(self.hass), client_id)
+            cloud = IntexCloud(async_get_clientsession(self.hass), new_client_id())
             try:
                 await cloud.login(
                     user_input[CONF_EMAIL],
@@ -89,13 +87,9 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
                 if not devices:
                     errors["base"] = "no_devices"
                 else:
-                    # Keep only the digest; the plaintext dies with this function.
-                    self._credentials = {
-                        CONF_EMAIL: user_input[CONF_EMAIL],
-                        CONF_COUNTRY: user_input[CONF_COUNTRY],
-                        CONF_PASSWORD_MD5: password_digest(user_input[CONF_PASSWORD]),
-                        "client_id": client_id,
-                    }
+                    # Nothing from the sign-in is kept: the credentials exist only for
+                    # as long as this flow runs, and what gets written to disk is the
+                    # device key needed for local control and nothing else.
                     self._devices = devices
                     if len(devices) == 1:
                         return await self._async_finish(devices[0])
@@ -173,10 +167,6 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=device["name"],
             data={
-                CONF_EMAIL: self._credentials[CONF_EMAIL],
-                CONF_PASSWORD_MD5: self._credentials[CONF_PASSWORD_MD5],
-                CONF_COUNTRY: self._credentials[CONF_COUNTRY],
-                "client_id": self._credentials["client_id"],
                 CONF_DEVICE_ID: device["device_id"],
                 CONF_LOCAL_KEY: device["local_key"],
                 CONF_HOST: host,
@@ -186,9 +176,9 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_reauth(
-        self, entry_data: dict[str, Any]
+        self, entry_data: Mapping[str, Any]
     ) -> ConfigFlowResult:
-        """The stored password stopped working - most likely it was changed."""
+        """The spa stopped accepting its key, which only a fresh sign-in can replace."""
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -198,12 +188,12 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            cloud = IntexCloud(async_get_clientsession(self.hass), entry.data["client_id"])
+            cloud = IntexCloud(async_get_clientsession(self.hass), new_client_id())
             try:
                 await cloud.login(
-                    entry.data[CONF_EMAIL],
+                    user_input[CONF_EMAIL],
                     password_digest(user_input[CONF_PASSWORD]),
-                    entry.data[CONF_COUNTRY],
+                    user_input[CONF_COUNTRY],
                 )
                 key = await cloud.local_key_for(entry.data[CONF_DEVICE_ID])
             except IntexAuthError:
@@ -216,25 +206,15 @@ class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 if key is None:
                     # The credentials work, but this account does not own this spa.
-                    # Storing them would leave the entry unable to renew its key.
                     errors["base"] = "wrong_account"
                 else:
                     return self.async_update_reload_and_abort(
-                        entry,
-                        data={
-                            **entry.data,
-                            CONF_PASSWORD_MD5: password_digest(user_input[CONF_PASSWORD]),
-                            CONF_LOCAL_KEY: key,
-                        },
+                        entry, data={**entry.data, CONF_LOCAL_KEY: key}
                     )
 
         return self.async_show_form(
             step_id="reauth_confirm",
-            data_schema=vol.Schema({
-                vol.Required(CONF_PASSWORD): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
-                )
-            }),
+            data_schema=CREDENTIALS_SCHEMA,
             errors=errors,
-            description_placeholders={"email": entry.data[CONF_EMAIL]},
+            description_placeholders={"name": entry.title},
         )

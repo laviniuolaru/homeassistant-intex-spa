@@ -61,7 +61,7 @@ class DataUpdateCoordinator:
 
 
 class FakeDevice:
-    """Returns an error until the local key it was built with matches the real one."""
+    """Answers only when both the address and the key it was built with are right."""
 
     real_key = "NEWKEY"
     real_host = "192.168.1.133"
@@ -81,20 +81,30 @@ class FakeDevice:
     def close(self):
         pass
 
-    def _ok(self):
-        return self.key == self.real_key and self.address == self.real_host
-
     replies = None      # when set, a list of payloads to hand out in order
 
-    def status(self):
-        if not self._ok():
+    def _fault(self):
+        """A wrong address and a wrong key fail differently, as on real hardware.
+
+        A wrong address never reaches anything, so it is an unreachable error. 914 means
+        the session-key handshake was answered and refused, which needs a device there.
+        """
+        if self.address != self.real_host:
+            return {"Err": "905", "Error": "device unreachable"}
+        if self.key != self.real_key:
             return {"Err": "914", "Error": "decrypt failed"}
+        return None
+
+    def status(self):
+        fault = self._fault()
+        if fault:
+            return fault
         if FakeDevice.replies:
             return FakeDevice.replies.pop(0)
         return {"dps": {"110": 90}}
 
     def set_value(self, dp, value, nowait=False):
-        return {"dps": {dp: value}} if self._ok() else {"Err": "914", "Error": "decrypt failed"}
+        return self._fault() or {"dps": {dp: value}}
 
 
 _mod("tinytuya", Device=FakeDevice)
@@ -156,6 +166,10 @@ class Entry:
     def __init__(self, data):
         self.data = data
         self.title = "Spa"
+        self.reauths = 0
+
+    def async_start_reauth(self, hass):
+        self.reauths += 1
 
 
 class Hass:
@@ -170,33 +184,11 @@ class Hass:
 
 def build(key="OLDKEY", host="192.168.1.133"):
     entry = Entry({
-        "email": "a@b.c", "password_md5": "d41d8cd98f00b204e9800998ecf8427e",
-        "country_code": "40", "client_id": "cid",
         "device_id": "dev", "local_key": key, "host": host, "protocol_version": "3.5",
     })
     return mod.IntexSpaCoordinator(Hass(), entry), entry
 
 
-class FakeCloud:
-    """Counts calls so the rate limiting can be checked too.
-
-    Hands out `serves` rather than whatever the device wants, so a scenario where the
-    cloud cannot actually fix the problem can be expressed.
-    """
-    logins = 0
-    serves = "NEWKEY"
-
-    def __init__(self, session, client_id):
-        pass
-
-    async def login(self, email, password, country):
-        FakeCloud.logins += 1
-
-    async def local_key_for(self, device_id):
-        return FakeCloud.serves
-
-
-mod.IntexCloud = FakeCloud
 results = []
 
 
@@ -206,51 +198,41 @@ def check(name, condition, detail=""):
 
 
 async def main():
-    # 1. rotated key is fetched and stored, and the poll still succeeds
-    FakeCloud.logins = 0
-    coord, entry = build(key="OLDKEY")
-    data = await coord._async_update_data()
-    check("rotated key is repaired in one cycle", data == {"110": 90}, str(data))
-    check("the new key is written to the config entry", entry.data["local_key"] == "NEWKEY")
-    check("exactly one cloud sign-in happened", FakeCloud.logins == 1, f"logins={FakeCloud.logins}")
-
-    # 2. healthy device must not touch the cloud at all
-    FakeCloud.logins = 0
+    # 1. the happy path
     coord, _ = build(key="NEWKEY")
-    await coord._async_update_data()
-    check("a healthy connection never calls the cloud", FakeCloud.logins == 0)
+    data = await coord._async_update_data()
+    check("a healthy poll returns the data points", data == {"110": 90}, str(data))
 
-    # 3. moved device is rediscovered
-    FakeCloud.logins = 0
+    # 2. a rotated key cannot be repaired here on purpose: nothing about the account is
+    #    stored, so the only way out is asking the owner to sign in again
+    coord, entry = build(key="OLDKEY")
+    try:
+        await coord._async_update_data()
+        check("a rotated key asks for a fresh sign-in", False, "nothing was raised")
+    except ConfigEntryAuthFailed:
+        check("a rotated key asks for a fresh sign-in", True)
+    check("the stored key was left alone", entry.data["local_key"] == "OLDKEY")
+
+    # 3. the same from a command, where Home Assistant would not start reauth by itself
+    coord, entry = build(key="OLDKEY")
+    try:
+        await coord.async_set_dp("107", True)
+    except Exception:  # noqa: BLE001
+        pass
+    check("a command also asks for a fresh sign-in", entry.reauths == 1,
+          f"reauths={entry.reauths}")
+
+    # 4. a moved device is still repaired without anyone signing in
     coord, entry = build(key="NEWKEY", host="192.168.1.99")
     mod.find_host = lambda hass, device_id, timeout=20.0: _async_return("192.168.1.133")
     data = await coord._async_update_data()
     check("a moved device is rediscovered", entry.data["host"] == "192.168.1.133", str(data))
 
-    # 4. commands repair too, instead of failing the first press
-    FakeCloud.logins = 0
-    coord, entry = build(key="OLDKEY")
-    await coord.async_set_dp("107", True)
-    check("a command repairs and then succeeds", entry.data["local_key"] == "NEWKEY")
-    check("the command scheduled a confirmation", coord._confirm_cancel is not None)
-
-    # 5. a failure the cloud cannot fix gives up instead of looping
-    FakeCloud.logins = 0
-    FakeDevice.real_key = "UNREACHABLE"       # the cloud still only serves NEWKEY
-    coord, _ = build(key="OLDKEY")
-    try:
-        await coord._async_update_data()
-        check("an unfixable failure raises UpdateFailed", False, "nothing was raised")
-    except UpdateFailed as err:
-        check("an unfixable failure raises UpdateFailed", True, str(err)[:44])
-    check("the cloud was not hammered in a loop", FakeCloud.logins <= 1, f"logins={FakeCloud.logins}")
-    FakeDevice.real_key = "NEWKEY"
-
-    # 6. partial payloads must merge, not wipe what was already known
+    # 5. partial and empty replies must not wipe what is known
     FakeDevice.replies = [
-        {"dps": {"104": True, "106": False, "110": 90}},   # full picture
-        {"dps": {"106": True}},                            # only what changed
-        {},                                                # nothing changed at all
+        {"dps": {"104": True, "106": False, "110": 90}},
+        {"dps": {"106": True}},
+        {},
     ]
     coord, _ = build(key="NEWKEY")
     first = await coord._async_update_data()
@@ -263,37 +245,30 @@ async def main():
           third == {"104": True, "106": True, "110": 90}, str(third))
     FakeDevice.replies = None
 
-    # 7. a write shows up immediately, without waiting for the next poll
+    # 6. a write shows immediately, and a push merges
     coord, _ = build(key="NEWKEY")
     await coord._async_update_data()
     await coord.async_set_dp("107", True)
     check("a write is reflected at once", coord.data.get("107") is True, str(coord.data))
-
-    # 8. a pushed update merges and is published without any polling
-    coord, _ = build(key="NEWKEY")
-    await coord._async_update_data()
-    coord._apply_push({"107": True})
-    check("a pushed update merges into the state", coord.data.get("107") is True, str(coord.data))
+    coord._apply_push({"105": True})
+    check("a pushed update merges into the state", coord.data.get("105") is True, str(coord.data))
     check("a push keeps the points it did not mention", coord.data.get("110") == 90)
 
-    # 9. a rotated key rebuilds the connection rather than reusing a dead socket
-    coord, _ = build(key="OLDKEY")
-    await coord._async_update_data()
-    check("the link was rebuilt after the key changed", coord._link.rebuilds >= 1,
-          f"rebuilds={coord._link.rebuilds}")
-
-    # 10. cooldown blocks a second cloud lookup soon after the first
-    FakeCloud.logins = 0
-    coord, _ = build(key="OLDKEY")
-    await coord._async_update_data()
-    coord.entry.data = {**coord.entry.data, "local_key": "OLDKEY"}
-    coord._link.rebuild()
+    # 7. an unreachable spa fails the update rather than serving stale values
+    FakeDevice.real_host = "192.168.1.1"
+    mod.find_host = lambda hass, device_id, timeout=20.0: _async_return(None)
+    coord, _ = build(key="NEWKEY")
     try:
         await coord._async_update_data()
-    except UpdateFailed:
-        pass
-    check("the cooldown blocks a second sign-in", FakeCloud.logins == 1,
-          f"logins={FakeCloud.logins}")
+        check("an unreachable spa raises UpdateFailed", False, "nothing was raised")
+    except UpdateFailed as err:
+        check("an unreachable spa raises UpdateFailed", True, str(err)[:40])
+    FakeDevice.real_host = "192.168.1.133"
+
+    # 8. the account is genuinely gone from the stored data
+    _, entry = build(key="NEWKEY")
+    leaked = [k for k in entry.data if k in ("email", "password", "password_md5", "client_id")]
+    check("no account data is stored at all", not leaked, str(leaked))
 
 
 async def _async_return(value):

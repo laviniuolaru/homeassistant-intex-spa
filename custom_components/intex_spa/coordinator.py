@@ -22,17 +22,13 @@ import tinytuya
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .cloud import IntexAuthError, IntexCloud, IntexCloudError
 from .const import (
-    CONF_COUNTRY,
     CONF_DEVICE_ID,
     CONF_HOST,
     CONF_LOCAL_KEY,
-    CONF_PASSWORD_MD5,
     CONF_PROTOCOL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -48,8 +44,6 @@ _LOGGER = logging.getLogger(__name__)
 # answering that with a cloud sign-in is the wrong diagnosis.
 KEY_ERRORS = frozenset({"914"})
 
-# Never ask the cloud more than this often, however badly the LAN side is failing.
-KEY_REFRESH_COOLDOWN = 600.0
 HOST_REDISCOVER_COOLDOWN = 300.0
 
 # How long to let the spa settle before re-reading after a write.
@@ -79,7 +73,6 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             always_update=False,
         )
         self.entry = entry
-        self._last_key_refresh = 0.0
         self._last_host_lookup = 0.0
         self._confirm_cancel: CALLBACK_TYPE | None = None
         # Accumulated view of the spa. Tuya answers with only the data points that
@@ -163,34 +156,6 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # --- recovery ------------------------------------------------------------------
 
-    async def _refresh_local_key(self) -> bool:
-        """Ask the cloud for the current key. True when it changed and was stored."""
-        now = time.monotonic()
-        if now - self._last_key_refresh < KEY_REFRESH_COOLDOWN:
-            return False
-        self._last_key_refresh = now
-
-        data = self.entry.data
-        cloud = IntexCloud(async_get_clientsession(self.hass), data["client_id"])
-        try:
-            await cloud.login(data["email"], data[CONF_PASSWORD_MD5], data[CONF_COUNTRY])
-            key = await cloud.local_key_for(data[CONF_DEVICE_ID])
-        except IntexAuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
-        except IntexCloudError as err:
-            _LOGGER.debug("Could not reach the cloud to refresh the local key: %s", err)
-            return False
-
-        if not key or key == data[CONF_LOCAL_KEY]:
-            return False
-
-        _LOGGER.info("The spa's local key changed; reconnecting with the new one")
-        self.hass.config_entries.async_update_entry(
-            self.entry, data={**data, CONF_LOCAL_KEY: key}
-        )
-        self._link.rebuild()
-        return True
-
     async def _rediscover_host(self) -> bool:
         """Re-find the spa on the LAN. True when the address changed and was stored."""
         now = time.monotonic()
@@ -212,12 +177,15 @@ class IntexSpaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_repair(self, error: str) -> bool:
         """Try once to make the connection work again. True when something changed.
 
-        Ordered by likelihood: a decrypt failure means the key almost certainly rotated,
-        anything else is more often the spa having moved to a new address.
+        A key error is not repairable from here. Nothing about the Intex account is
+        stored, deliberately, so a rotated key can only be replaced by asking the owner
+        to sign in again - which is what raising this triggers.
         """
         if error in KEY_ERRORS:
-            return await self._refresh_local_key() or await self._rediscover_host()
-        return await self._rediscover_host() or await self._refresh_local_key()
+            raise ConfigEntryAuthFailed(
+                "the spa no longer accepts its stored key; sign in again to fetch a new one"
+            )
+        return await self._rediscover_host()
 
     # --- polling -------------------------------------------------------------------
 

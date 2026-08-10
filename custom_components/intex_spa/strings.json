@@ -11,7 +11,7 @@
         },
         "data_description": {
           "country_code": "The dialling code of the country the account was registered in, without the plus sign. Romania is 40, Germany 49, the United Kingdom 44.",
-          "password": "Stored so the encryption key can be renewed automatically if you ever re-pair the spa."
+          "password": "Used once, to read your spa's device key. It is not stored."
         }
       },
       "device": {
@@ -27,9 +27,11 @@
       },
       "reauth_confirm": {
         "title": "Sign in again",
-        "description": "The password stored for {email} is no longer accepted.",
+        "description": "{name} no longer accepts its stored key, which happens when the spa is re-paired in the Intex Link app. Sign in to fetch the new one. Nothing from this is kept.",
         "data": {
-          "password": "Password"
+          "email": "Email",
+          "password": "Password",
+          "country_code": "Country dialling code"
         }
       }
     },

@@ -11,7 +11,7 @@
         },
         "data_description": {
           "country_code": "Prefixul țării în care a fost înregistrat contul, fără plus. România este 40, Germania 49, Marea Britanie 44.",
-          "password": "Se păstrează pentru ca reînnoirea cheii de criptare să se facă singură dacă reasociezi spa-ul."
+          "password": "Folosită o singură dată, ca să se citească cheia spa-ului. Nu se salvează."
         }
       },
       "device": {
@@ -27,9 +27,11 @@
       },
       "reauth_confirm": {
         "title": "Autentificare din nou",
-        "description": "Parola salvată pentru {email} nu mai este acceptată.",
+        "description": "{name} nu mai acceptă cheia salvată, ceea ce se întâmplă când reasociezi spa-ul în aplicația Intex Link. Autentifică-te ca să fie luată cea nouă. Nu se păstrează nimic din asta.",
         "data": {
-          "password": "Parolă"
+          "email": "Email",
+          "password": "Parolă",
+          "country_code": "Prefixul telefonic al țării"
         }
       }
     },

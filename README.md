@@ -1,8 +1,11 @@
 # Intex Spa for Home Assistant
 
-Control an Intex PureSpa with a **Tuya** WiFi module from Home Assistant. You sign in
-once with your Intex Link account; the device id, encryption key and network address are
-found automatically. After setup all control is local, on your own network.
+Control an Intex PureSpa with a **Tuya** WiFi module from Home Assistant, **using your
+Intex Link account** — the one already on your phone. No Tuya account, no Smart Life
+account, no developer portal, no re-pairing the spa away from the app you use.
+
+You sign in once. The device id, its encryption key and its address on your network are
+found for you. After that everything is local, and **nothing from that sign-in is kept**.
 
 > An independent project, [not affiliated with Intex or Tuya](#not-affiliated-with-intex-or-tuya).
 
@@ -20,10 +23,12 @@ APP", so the information needed to interoperate is not available by that route. 
 remaining documented option is re-pairing the spa into the Smart Life app, which means
 giving up the Intex Link app.
 
-This integration signs in to the same service the Intex Link app uses, as you, with your
-own account, and reads your own device's key. The Intex Link app keeps working - it talks
-to the spa through the cloud while this integration talks to it over the LAN, so the two
-do not collide.
+This integration signs in to the same service the Intex Link app uses, as you, with the
+account you already have, and reads your own device's key. That is the whole point of it:
+the account you use is the one on your phone, not a second one you have to create.
+
+The Intex Link app keeps working - it talks to the spa through the cloud while this
+integration talks to it over the LAN, so the two do not collide.
 
 ## What you get
 
@@ -47,16 +52,19 @@ bubbles on from the Intex Link app shows up in Home Assistant straight away rath
 whenever a poll next comes round. A read every thirty seconds remains, purely as a
 liveness check.
 
-## Self-repair
+## When the key changes
 
-Re-pairing the spa in the Intex Link app **rotates the local key**. With a generic Tuya
-integration that silently breaks the connection and you have to fetch a new key by hand.
+Re-pairing the spa in the Intex Link app **rotates its key**. With a generic Tuya
+integration that silently breaks the connection and you have to go and fetch a new key by
+hand, through a developer portal that does not support these spas.
 
-Here, a decrypt failure triggers a fresh cloud lookup, the new key is written back to the
-config entry and the connection is rebuilt, without you doing anything. The same applies
-if the spa's IP address changes: it is looked up again from the beacons the device
-broadcasts. Both are rate limited so a genuinely offline spa cannot turn into a flood of
-cloud requests.
+Here, Home Assistant notices and asks you to sign in again. One dialog, the same email and
+password as before, and the new key is fetched for you. That is deliberately not automatic:
+doing it unattended would mean keeping your password on disk, and it is not worth it for
+something that only happens when you were standing at the spa re-pairing it anyway.
+
+A changed IP address **is** handled without you - the spa is simply looked up again on the
+network.
 
 ## Install
 
@@ -69,26 +77,20 @@ United Kingdom.
 
 ## Things you should know
 
-**Credentials are kept, but not your actual password.** Renewing the key without you
-means being able to sign in without you, so something has to be stored. The Tuya login
-only ever receives `MD5(password)`, so that digest is what gets hashed at setup and
-written to the config entry - the plaintext is discarded and never reaches disk.
+**Your Intex credentials are never stored.** They are used once, in the setup dialog, to
+read your spa's key, and then discarded. Not the password, not a hash of it, not the
+email, not the session. Nothing.
 
-Be clear about what that does and does not buy you. It means a leaked backup does not
-hand someone a password to try against your email. It does **not** protect the Intex
-account itself: the digest is enough to sign in there. And MD5 is unsalted, so a weak or
-common password can be recovered from it in seconds. Use a password you do not use
-anywhere else.
+What **is** stored is the spa's device id, its local key, and its address - the three
+things local control needs. The local key is a device secret: it lets something already on
+your network talk to your spa. It is not an account credential and cannot be used to sign
+in anywhere.
 
-Home Assistant stores config entries as plain text under `.storage` and does not encrypt
-them, which also means they travel inside backups. That is a
+That matters because Home Assistant keeps config entries as plain text under `.storage`
+and does not encrypt them, so they travel inside every backup. That is a
 [long-standing complaint](https://community.home-assistant.io/t/wth-2025-a-secret-is-secret-why-are-passwords-in-plain-text-in-the-config-entries-file/809838)
-about Home Assistant rather than anything specific to this integration, but it is worth
-knowing.
-
-If you would rather store nothing at all, do not use this integration - use
-[tuya-local](https://github.com/make-all/tuya-local) with a key you fetch by hand. You
-lose the automatic recovery, which is the whole point of this one.
+about Home Assistant rather than anything specific to this integration - but it is exactly
+why there is nothing here worth taking.
 
 **How much this talks to Intex's servers.** Once, at setup, to read the device id and
 key. After that only when the local connection stops decrypting - which means the key
