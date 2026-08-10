@@ -74,9 +74,10 @@ def _sign(params: dict[str, str]) -> str:
 def _envelope_key(request_id: str, ecode: str | None) -> bytes:
     """Derive the per-request envelope key exactly as the app does.
 
-    This is obfuscation, not confidentiality: the request id that keys the HMAC travels
-    in the clear in the same POST, so anyone who sees the request can derive it. TLS is
-    what actually protects these calls.
+    This is obfuscation, not confidentiality. The request id that keys the HMAC travels
+    in the clear in the same POST, and the message it hashes is a constant shipped in
+    every copy of the app, so the key is reproducible by anyone who has both - which is
+    anyone at all. TLS is what actually protects these calls.
     """
     msg = SECRET + (f"_{ecode}" if ecode else "")
     return hmac.new(request_id.encode(), msg.encode(), hashlib.sha256).hexdigest()[:16].encode()

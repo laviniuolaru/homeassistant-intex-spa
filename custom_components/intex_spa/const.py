@@ -17,10 +17,15 @@ DEFAULT_COUNTRY: Final = "40"          # Romania; the app sends the dialling cod
 DEFAULT_PROTOCOL: Final = "3.5"
 DEFAULT_SCAN_INTERVAL: Final = 30      # seconds; only a liveness check, updates are pushed
 
-# --- Intex Link app constants, extracted from the APK; identical for every user ---
-# Published in bpietroiu/homeassistant-intex-pool (MIT). The Tuya IoT developer
-# route is closed for these devices: the pairing QR is rejected as "designated APP",
-# so the app's own OEM credentials are the only way to reach the account.
+# --- Intex Link app constants: the client identity, identical for every user ---
+# Copied from bpietroiu/homeassistant-intex-pool (MIT), which published them; see
+# THIRD_PARTY_NOTICES.md. Nothing here was decompiled for this project.
+#
+# These identify the client, they do not grant access to anything: signing in still
+# needs the account holder's own email and password. They are needed because the Tuya
+# IoT developer route does not support these devices - it rejects the pairing QR as
+# belonging to a "designated APP" - so the information required to interoperate is not
+# otherwise available.
 PACKAGE: Final = "com.intex.spa"
 APP_KEY: Final = "mtsv5smaw8gyhws3a5w7"
 CH_KEY: Final = "eefe5a0d"
@@ -35,7 +40,7 @@ BASE_URL: Final = "https://a1.tuyaeu.com"
 # and reach the project if the traffic ever bothers them.
 USER_AGENT: Final = (
     "homeassistant-intex-spa/%s (+https://github.com/laviniuolaru/homeassistant-intex-spa)"
-    % "0.3.2"
+    % "0.3.3"
 )
 APP_VERSION: Final = "1.1.11"
 

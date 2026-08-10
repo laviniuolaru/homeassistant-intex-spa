@@ -12,15 +12,16 @@ integrations written for the original Intex protocol cannot talk to it at all - 
 speak a proprietary protocol on TCP port 8990, while a Tuya module only answers on 6668.
 
 The usual workaround is a generic Tuya integration, but those need a `local_key` that you
-are expected to obtain through the Tuya IoT developer platform. That route is closed for
-these spas: the pairing QR code is rejected as belonging to a "designated APP". The
-remaining option is re-pairing the spa into the Smart Life app, which means giving up the
-Intex Link app.
+are expected to obtain through the Tuya IoT developer platform. **That platform does not
+support these devices**: it rejects the pairing QR code as belonging to a "designated
+APP", so the information needed to interoperate is not available by that route. The
+remaining documented option is re-pairing the spa into the Smart Life app, which means
+giving up the Intex Link app.
 
-This integration takes the third path. It signs in to the same service the Intex Link app
-uses, with the app's own credentials, and reads the key from there. The Intex Link app
-keeps working - it talks to the spa through the cloud while this integration talks to it
-over the LAN, so the two do not collide.
+This integration signs in to the same service the Intex Link app uses, as you, with your
+own account, and reads your own device's key. The Intex Link app keeps working - it talks
+to the spa through the cloud while this integration talks to it over the LAN, so the two
+do not collide.
 
 ## What you get
 
@@ -93,9 +94,18 @@ was rotated - and never more than once every ten minutes however badly the local
 failing. Everything else happens on your own network. Requests identify themselves as
 this integration in the `User-Agent` header rather than passing for the Intex Link app.
 
-**The app credentials are extracted from the Intex Link APK.** They are the same for
-every user and are already published elsewhere. If Intex or Tuya ever rotate them, sign-in
-stops working for everyone until they are updated here.
+**The app constants are a client identity, not a key to anything.** They identify the
+software making the request; signing in still requires your own email and password, and
+the integration only ever reads your own account. They are the same for every user of the
+Intex Link app. They were **copied from a public MIT-licensed repository** that published
+them (see THIRD_PARTY_NOTICES.md); nothing was decompiled for this project. If Intex or
+Tuya ever change them, sign-in stops working for everyone until they are updated here.
+
+**Using this may not sit well with Intex's or Tuya's terms.** Neither publishes terms
+covering this endpoint, and no action has ever been taken against a project of this kind -
+but automated access to your account is not something either has authorised, and in
+principle it could result in action against your account. You are choosing that; the
+software cannot choose it for you.
 
 **The spa accepts one local connection at a time.** Running another Tuya tool against it
 in parallel will knock this integration off for a few seconds. The Intex Link app is not
@@ -105,6 +115,13 @@ affected, because it goes through the cloud.
 `bksofco59ud7eovz` ("SPA PRODUCT WITH SALT & JET"). Other models are accepted, and
 entities are created only for data points your spa actually reports - but if yours behaves
 oddly, open an issue with its product id.
+
+## Not affiliated with Intex or Tuya
+
+This is an independent project, not affiliated with, authorised by, or endorsed by Intex
+Recreation Corp. or Tuya Inc. INTEX and INTEX LINK are trademarks of Intex Recreation
+Corp.; TUYA is a trademark of Tuya Inc. They are used here only to identify the devices
+and services this software works with.
 
 ## Credits
 
