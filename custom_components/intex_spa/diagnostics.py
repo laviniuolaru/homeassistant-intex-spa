@@ -10,8 +10,13 @@ from homeassistant.core import HomeAssistant
 from . import IntexSpaConfigEntry
 from .const import CONF_DEVICE_ID, CONF_LOCAL_KEY
 
-# Nothing about the Intex account is stored, so this is the whole of it.
-REDACT = {CONF_LOCAL_KEY, CONF_DEVICE_ID}
+# Nothing about the Intex account is stored any more, but an entry that has not been
+# migrated yet may still carry the old fields, and a diagnostics dump is the one place
+# they would be handed to someone else.
+REDACT = {
+    CONF_LOCAL_KEY, CONF_DEVICE_ID,
+    "email", "password", "password_md5", "country_code", "client_id",
+}
 
 
 async def async_get_config_entry_diagnostics(

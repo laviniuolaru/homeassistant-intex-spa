@@ -56,7 +56,7 @@ CREDENTIALS_SCHEMA = vol.Schema({
 class IntexSpaConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle setting up an Intex spa."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         self._devices: list[dict[str, Any]] = []

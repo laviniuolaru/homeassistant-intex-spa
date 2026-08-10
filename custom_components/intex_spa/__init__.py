@@ -35,6 +35,30 @@ def _quieten_tinytuya() -> None:
         logger.setLevel(logging.INFO)
 
 
+# Everything an entry written before credentials were dropped may still be carrying.
+LEGACY_KEYS = ("email", "password", "password_md5", "country_code", "client_id")
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: IntexSpaConfigEntry) -> bool:
+    """Strip account details from entries created when they were still stored.
+
+    Nothing reads them any more, so the integration works without this - which is
+    exactly the problem: they would sit in .storage, and in every backup taken since,
+    with nobody ever noticing they were still there.
+    """
+    if entry.version == 1:
+        present = [key for key in LEGACY_KEYS if key in entry.data]
+        data = {k: v for k, v in entry.data.items() if k not in LEGACY_KEYS}
+        hass.config_entries.async_update_entry(entry, data=data, version=2)
+        if present:
+            _LOGGER.info(
+                "Removed %d stored account field(s) left over from an earlier version; "
+                "consider changing your Intex password if a backup of this system has "
+                "been shared", len(present),
+            )
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: IntexSpaConfigEntry) -> bool:
     """Set up the spa from a config entry."""
     _quieten_tinytuya()
